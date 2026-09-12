@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "WappaCVElyze",
+  "version": "0.1.0",
+  "description": "Shows the technologies behind a website, their versions, and whether those versions have known CVEs.",
+  "permissions": ["storage", "unlimitedStorage", "tabs", "webRequest", "cookies"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["page.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "WappaCVElyze" },
+  "options_ui": { "page": "options.html", "open_in_tab": false },
+  "browser_specific_settings": {
+    "gecko": { "id": "wappacvelyze@xzoroo.github.io", "strict_min_version": "128.0" }
+  }
+}

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WappaCVElyze</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="brand">Wappa<span class="brand-accent">CVE</span>lyze</div>
+      <div id="host" class="host"></div>
+    </header>
+    <div id="summary" class="summary"></div>
+    <main id="results" class="results"></main>
+    <footer class="footer">
+      <button id="rescan" type="button" class="button">Rescan</button>
+      <button id="settings" type="button" class="button button-quiet">Settings</button>
+      <span class="footer-note">Data: NVD &amp; CISA KEV</span>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

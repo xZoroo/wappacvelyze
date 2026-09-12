@@ -27,8 +27,8 @@ https://example-shop.test
   MySQL               —        UNKNOWN         version not disclosed
 ```
 
-The project ships as a **command-line tool** today. A **browser extension** that shows the
-same verdicts in a popup is the next milestone — see [Browser extension](#browser-extension-planned).
+The project ships as a **command-line tool** and a **browser extension** (Chrome, Edge,
+Firefox) that shows the same verdicts in a popup — see [Browser extension](#browser-extension).
 
 ---
 
@@ -37,7 +37,7 @@ same verdicts in a popup is the next milestone — see [Browser extension](#brow
 - [Installation](#installation)
 - [Using the CLI](#using-the-cli)
 - [How it works](#how-it-works)
-- [Browser extension (planned)](#browser-extension-planned)
+- [Browser extension](#browser-extension)
 - [Project layout](#project-layout)
 - [Development](#development)
 - [Limitations](#limitations)
@@ -266,39 +266,79 @@ The default location is `~/Library/Caches/wappacvelyze` on macOS,
 
 ---
 
-## Browser extension (planned)
+## Browser extension
 
-The second deliverable is a Manifest V3 extension for Chrome, Edge, and Firefox that shows
-the same verdicts when you click its toolbar icon on any page. It is **not built yet**; this
-section documents the intended design so the CLI's data model can serve as its contract.
+The extension shows the same verdicts as the CLI when you click its toolbar icon on any
+page — and because it runs inside the rendered page it also sees JavaScript-only evidence
+(`jQuery.fn.jquery`, `React.version`, …) that a passive HTTP scan cannot.
 
-**What you'll see.** A popup listing detected technologies grouped by category (Web server,
-CMS, JavaScript framework, CDN, …). Each row shows a status dot, the technology name, its
-version, a badge (`Current` / `Unknown` / `CVE-2024-4577` / `KEV · CVE-2021-44228`), and a
-link to the NVD record or CISA entry. Rows sort `Critical → Vulnerable → Unknown → Current`;
-categories with nothing above `Unknown` collapse by default.
+**What you see.** A popup listing detected technologies grouped by category. Each row has a
+status dot, the technology name (linked to its website), the detected version, a badge
+(`Current` / `Unknown` / `CVE-2024-4577` / `KEV · CVE-2021-44228`), and for red or critical
+rows the CVSS score, affected version range, and links to the NVD record or CISA KEV entry
+and the vendor advisory. Rows sort `Critical → Vulnerable → Unknown → Current`. The toolbar
+badge shows how many technologies are vulnerable or critical.
 
-**How it will work.**
+### Build it
 
-- A **content script** collects the DOM-side evidence the fingerprint database needs:
-  `<meta>` tags, `<script src>` URLs, and JavaScript globals such as `jQuery.fn.jquery`.
-  Because it runs inside the rendered page it can see versions the passive CLI cannot.
-- A **background service worker** captures response headers (`Server`, `X-Powered-By`,
-  cookies), runs the fingerprint engine, and performs the same NVD → applicability → KEV
-  pipeline as the CLI, with the cache held in `chrome.storage.local` because MV3 workers
-  are short-lived.
-- The **popup** is a rendering layer over the same JSON shape the CLI emits with
-  `--format json`; the four statuses and their meanings are identical.
+Building needs Node 22+ and Go 1.25+ (Go generates the fingerprint data from the same
+wappalyzergo release the CLI uses, so both surfaces detect identically):
+
+```sh
+make extension        # = cd extension && npm ci && npm run build
+```
+
+This produces `extension/dist/` for Chrome and Edge and `extension/dist-firefox/` for
+Firefox (identical code; only the manifest's background declaration differs).
+
+### Load it
+
+- **Chrome / Edge / Brave:** open `chrome://extensions`, turn on *Developer mode*, click
+  *Load unpacked*, and pick `extension/dist`.
+- **Firefox (128+):** open `about:debugging#/runtime/this-firefox`, click *Load Temporary
+  Add-on…*, and pick `extension/dist-firefox/manifest.json`. Firefox treats host permissions
+  as optional in Manifest V3 — grant them from the extension's settings so headers and
+  cookies can be observed. Firefox support is untested so far.
+
+Then browse anywhere and click the toolbar icon. *Rescan* re-collects the current page;
+*Settings* opens the options page where you can store an NVD API key (raises the lookup
+limit from 5 to 50 per 30 seconds) and clear the CVE cache.
+
+### How it works
+
+Three scripts cooperate, and the verdict pipeline is the CLI's, ported to TypeScript
+(`extension/src/lib/`):
+
+- **`page.js`** runs in the page's own JavaScript world and reads the globals and DOM
+  properties the fingerprint database asks about. It never receives data from the extension.
+- **`content.js`** runs in the isolated world, collects `<meta>` tags, script sources, inline
+  scripts, DOM evidence and the page script's observations, and sends them to the worker.
+  Everything from the page is treated as untrusted input and only ever regex-matched or
+  rendered as text.
+- **`background.js`** (service worker) records response headers as pages load, reads
+  cookies, runs detection, then performs the NVD → applicability → KEV pipeline with results
+  cached in `chrome.storage.local` for 24 hours. Per-tab results live in
+  `chrome.storage.session` and are cleared when the tab navigates or closes.
+
+Permissions: `webRequest` and `<all_urls>` to observe response headers on every site,
+`cookies` for cookie-based fingerprints, `storage`/`unlimitedStorage` for the CVE and KEV
+caches, `tabs` to map results to tabs. Nothing is sent anywhere except queries to NVD and
+CISA; the extension has no server of its own.
 
 ---
 
 ## Project layout
 
 ```
-cmd/wappacvelyze/   CLI: argument parsing, table/JSON rendering, cache subcommands
-detect/             Technology detection — thin wrapper over wappalyzergo
-cve/                NVD API client, CISA KEV loader, applicability check, cache, classifier
-Makefile            build / install / test shortcuts
+cmd/wappacvelyze/        CLI: argument parsing, table/JSON rendering, cache subcommands
+cmd/gen-extension-data/  Exports the fingerprint database for the extension
+detect/                  Technology detection — thin wrapper over wappalyzergo
+cve/                     NVD API client, CISA KEV loader, applicability check, cache, classifier
+extension/               Browser extension (TypeScript, Manifest V3)
+  src/lib/               Detection engine and CVE pipeline, mirroring detect/ and cve/
+  src/{background,content,page,popup,options}.ts
+  test/                  vitest suites
+Makefile                 build / install / test / extension shortcuts
 ```
 
 The upstream projects this design was distilled from (`wappalyzer`, `wappalyzergo`,
@@ -314,10 +354,18 @@ make test     # go test ./...
 make vet      # go vet ./...
 make fmt      # gofmt -w
 make build    # ./wappacvelyze
+
+cd extension
+npm run data       # regenerate src/generated/ from wappalyzergo (needs Go)
+npm test           # vitest
+npm run typecheck  # tsc --noEmit
+npm run lint       # oxlint
+npm run build      # dist/ and dist-firefox/
 ```
 
-Tests are self-contained: NVD and CISA responses are served by in-process test servers, and
-fingerprinting is exercised against synthetic headers and HTML. No network access is needed.
+Tests are self-contained: NVD and CISA responses are served by in-process test servers (Go)
+or mocked `fetch` (TypeScript), and fingerprinting is exercised against synthetic headers,
+HTML and JavaScript globals using the real fingerprint database. No network access is needed.
 
 To try the full pipeline against something guaranteed to light up red, point the scanner at
 a local server that advertises old versions:
@@ -337,9 +385,8 @@ wappacvelyze scan http://127.0.0.1:8765
 
 ## Limitations
 
-- **Passive detection only.** The CLI does not run JavaScript, so technologies that only
-  reveal themselves at runtime (and their versions) can be missed. The browser extension
-  will close that gap.
+- **The CLI is passive.** It does not run JavaScript, so technologies that only reveal
+  themselves at runtime (and their versions) can be missed; the browser extension sees them.
 - **A version is not always disclosed.** Hardened servers strip version tokens; the tool
   reports `UNKNOWN` rather than guessing. `UNKNOWN` is not a clean bill of health.
 - **CPE naming drift.** NVD sometimes files a product under more than one vendor
