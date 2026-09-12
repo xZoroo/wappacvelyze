@@ -22,12 +22,21 @@ const (
 	nvdTTL    = 24 * time.Hour
 )
 
+// defaultCacheDir is empty when the OS cache directory is unknown; the caches then
+// require an explicit --cache-dir rather than falling back to a world-writable temp dir.
 func defaultCacheDir() string {
 	base, err := os.UserCacheDir()
 	if err != nil {
-		base = os.TempDir()
+		return ""
 	}
 	return filepath.Join(base, "wappacvelyze")
+}
+
+func requireCacheDir(dir string) error {
+	if dir == "" {
+		return errors.New("no user cache directory available; pass --cache-dir")
+	}
+	return nil
 }
 
 func runCache(args []string, stdout, stderr io.Writer) int {
@@ -42,6 +51,10 @@ func runCache(args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
 		}
+		return exitError
+	}
+	if err := requireCacheDir(*cacheDir); err != nil {
+		fmt.Fprintln(stderr, "error:", err)
 		return exitError
 	}
 	switch fs.Arg(0) {

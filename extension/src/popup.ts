@@ -1,6 +1,7 @@
 // Popup: renders the background worker's result for the active tab and keeps it live.
 
 import { rank } from "./lib/classify.ts";
+import { isSafeLink } from "./lib/evidence.ts";
 import type { Assessment, Status, TabResult } from "./lib/types.ts";
 import { resultKey, type RuntimeMessage } from "./messages.ts";
 
@@ -24,7 +25,10 @@ function element<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-function link(href: string, text: string): HTMLAnchorElement {
+function link(href: string, text: string): HTMLElement {
+  if (!isSafeLink(href)) {
+    return element("span", "", text);
+  }
   const anchor = element("a", "", text);
   anchor.href = href;
   anchor.target = "_blank";

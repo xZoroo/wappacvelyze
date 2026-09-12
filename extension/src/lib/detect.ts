@@ -30,6 +30,20 @@ interface Detection {
 const MAX_VERSION_LENGTH = 15;
 const MAX_LEADING_NUMBER = 10000;
 
+/** Detection stops after this long so a pathological page cannot pin the worker. */
+export const DEFAULT_BUDGET_MS = 3000;
+
+export interface AnalyzeOptions {
+  budgetMs?: number;
+  now?: () => number;
+}
+
+export interface AnalysisResult {
+  technologies: Technology[];
+  /** True when the time budget ran out before every fingerprint was checked. */
+  truncated: boolean;
+}
+
 /** Substitutes capture groups into a version template, honouring `\1?yes:no` ternaries. */
 export function resolveVersion(template: string, groups: RegExpExecArray): string {
   let version = template;
@@ -155,15 +169,33 @@ function addImplied(found: Map<string, Technology>, database: Map<string, Finger
   }
 }
 
-/** Identifies technologies in evidence. Results are sorted by name. */
-export function analyze(evidence: Evidence, database: Map<string, Fingerprint>): Technology[] {
+/** Identifies technologies in evidence within a time budget. Results are sorted by name. */
+export function analyzeWithBudget(
+  evidence: Evidence,
+  database: Map<string, Fingerprint>,
+  options: AnalyzeOptions = {},
+): AnalysisResult {
+  const budgetMs = options.budgetMs ?? DEFAULT_BUDGET_MS;
+  const now = options.now ?? (() => Date.now());
+  const deadline = now() + budgetMs;
   const found = new Map<string, Technology>();
+  let truncated = false;
   for (const fingerprint of database.values()) {
+    if (now() > deadline) {
+      truncated = true;
+      break;
+    }
     const detections = detect(fingerprint, evidence);
     if (detections.some((d) => d.confidence > 0)) {
       found.set(fingerprint.name, toTechnology(fingerprint, bestVersion(detections)));
     }
   }
   addImplied(found, database);
-  return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const technologies = [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return { technologies, truncated };
+}
+
+/** Identifies technologies in evidence. Results are sorted by name. */
+export function analyze(evidence: Evidence, database: Map<string, Fingerprint>): Technology[] {
+  return analyzeWithBudget(evidence, database).technologies;
 }
