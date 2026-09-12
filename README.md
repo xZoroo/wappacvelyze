@@ -41,6 +41,7 @@ same verdicts in a popup is the next milestone — see [Browser extension](#brow
 - [Project layout](#project-layout)
 - [Development](#development)
 - [Limitations](#limitations)
+- [License](#license)
 - [Acknowledgements](#acknowledgements)
 
 ---
@@ -351,6 +352,11 @@ wappacvelyze scan http://127.0.0.1:8765
   slow by design (5 requests / 30 s).
 
 ---
+
+## License
+
+[MIT](LICENSE). The fingerprint database bundled through wappalyzergo originates from
+[enthec/webappanalyzer](https://github.com/enthec/webappanalyzer), which is GPL-3.0 licensed.
 
 ## Acknowledgements
 
