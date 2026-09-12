@@ -41,6 +41,8 @@ const PAGE_EVIDENCE_TIMEOUT_MS = 3000;
 
 let pageEvidence: PageEvidence = { js: emptyRecord(), domProperties: emptyRecord() };
 let sentOnce = false;
+let sendTimer: ReturnType<typeof setTimeout> | undefined;
+const SEND_DEBOUNCE_MS = 250;
 
 function collectMeta(): Record<string, string[]> {
   const meta = emptyRecord<string[]>();
@@ -126,8 +128,11 @@ function collect(): CollectedEvidence {
 
 function send(): void {
   sentOnce = true;
-  const message: RuntimeMessage = { type: "evidence", evidence: collect() };
-  void chrome.runtime.sendMessage(message).catch(() => undefined);
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => {
+    const message: RuntimeMessage = { type: "evidence", evidence: collect() };
+    void chrome.runtime.sendMessage(message).catch(() => undefined);
+  }, SEND_DEBOUNCE_MS);
 }
 
 window.addEventListener("message", (event: MessageEvent<PageMessage>) => {

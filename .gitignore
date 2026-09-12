@@ -19,3 +19,6 @@
 /extension/dist/
 /extension/dist-firefox/
 /extension/src/generated/
+
+# macOS
+.DS_Store
