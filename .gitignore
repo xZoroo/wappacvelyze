@@ -13,3 +13,9 @@
 /.claude/
 /.agents/
 /skills-lock.json
+
+# Browser extension build artifacts and generated (GPL-licensed) fingerprint data
+/extension/node_modules/
+/extension/dist/
+/extension/dist-firefox/
+/extension/src/generated/

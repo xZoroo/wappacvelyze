@@ -1,0 +1,23 @@
+{
+  "name": "wappacvelyze-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser extension: technologies behind a site, their versions, and known CVEs",
+  "scripts": {
+    "data": "go run ../cmd/gen-extension-data src/generated",
+    "build": "npm run data && node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src test",
+    "fmt": "oxfmt src test build.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.2.9",
+    "esbuild": "0.28.2",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}
