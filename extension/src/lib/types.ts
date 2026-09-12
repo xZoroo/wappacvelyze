@@ -53,6 +53,9 @@ export interface TabResult {
   assessments: Assessment[];
 }
 
+export type Theme = "auto" | "light" | "dark";
+
 export interface Settings {
   nvdApiKey: string;
+  theme: Theme;
 }

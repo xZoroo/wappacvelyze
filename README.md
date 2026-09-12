@@ -300,9 +300,12 @@ Firefox (identical code; only the manifest's background declaration differs).
   as optional in Manifest V3 — grant them from the extension's settings so headers and
   cookies can be observed. Firefox support is untested so far.
 
-Then browse anywhere and click the toolbar icon. *Rescan* re-collects the current page;
-*Settings* opens the options page where you can store an NVD API key (raises the lookup
-limit from 5 to 50 per 30 seconds) and clear the CVE cache.
+Then browse anywhere and click the toolbar icon. *Rescan page* re-collects the current
+page; the half-circle / sun / moon button cycles the appearance between following the
+system, light and dark; the gear opens the options page where you can store an NVD API key
+(raises the lookup limit from 5 to 50 per 30 seconds), pick the appearance, and clear the
+CVE cache. Framework globals such as `next.version` often appear seconds after the page is
+idle, so the page script keeps sampling for 25 seconds and the popup updates live.
 
 ### How it works
 

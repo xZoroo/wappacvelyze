@@ -2,14 +2,21 @@
 
 import { rank } from "./lib/classify.ts";
 import { isSafeLink } from "./lib/evidence.ts";
-import type { Assessment, Status, TabResult } from "./lib/types.ts";
+import type { Assessment, Status, TabResult, Theme } from "./lib/types.ts";
 import { resultKey, type RuntimeMessage } from "./messages.ts";
+import { applyTheme, loadSettings, nextTheme, saveSettings } from "./settings.ts";
 
 const LABELS: Record<Status, string> = {
   current: "Current",
   unknown: "Unknown",
   vulnerable: "Vulnerable",
   critical: "Critical · KEV",
+};
+
+const THEME_TITLES: Record<Theme, string> = {
+  auto: "Theme: follows system (click for light)",
+  light: "Theme: light (click for dark)",
+  dark: "Theme: dark (click for system)",
 };
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -36,8 +43,18 @@ function link(href: string, text: string): HTMLElement {
   return anchor;
 }
 
+/** Reasons common enough that the badge alone explains them; the detail line stays empty. */
+const QUIET_REASONS: Record<string, string> = {
+  "version not disclosed": "No version",
+  "no CPE mapping for this technology": "No CVE data",
+  "checking…": "Checking…",
+};
+
 function badgeText(assessment: Assessment): string {
   const top = assessment.vulnerabilities?.[0];
+  if (assessment.status === "unknown") {
+    return QUIET_REASONS[assessment.reason ?? ""] ?? LABELS.unknown;
+  }
   if (!top || rank(assessment.status) < rank("vulnerable")) {
     return LABELS[assessment.status];
   }
@@ -48,6 +65,9 @@ function detail(assessment: Assessment): HTMLElement | null {
   const node = element("div", "detail");
   const top = assessment.vulnerabilities?.[0];
   if (assessment.status === "unknown") {
+    if ((assessment.reason ?? "") in QUIET_REASONS) {
+      return null;
+    }
     node.textContent = assessment.reason ?? "";
     return node;
   }
@@ -74,16 +94,20 @@ function detail(assessment: Assessment): HTMLElement | null {
 }
 
 function row(assessment: Assessment): HTMLElement {
-  const node = element("div", "row");
-  node.append(element("span", `dot dot-${assessment.status}`));
-  const name = element("span", "name");
   const { technology } = assessment;
+  const node = element("div", "row");
+  node.append(element("span", "avatar", technology.name.charAt(0).toUpperCase()));
+  const name = element("span", "name");
   name.append(technology.website ? link(technology.website, technology.name) : technology.name);
   if (technology.version) {
     name.append(element("span", "version", technology.version));
   }
   node.append(name);
-  node.append(element("span", `badge badge-${assessment.status}`, badgeText(assessment)));
+  const badge = element("span", `badge badge-${assessment.status}`, badgeText(assessment));
+  if (assessment.vulnerabilities?.[0]?.kev) {
+    badge.title = assessment.vulnerabilities[0].kev.vulnerabilityName;
+  }
+  node.append(badge);
   const extra = detail(assessment);
   if (extra) {
     node.append(extra);
@@ -95,7 +119,9 @@ function groupByCategory(assessments: Assessment[]): Map<string, Assessment[]> {
   const groups = new Map<string, Assessment[]>();
   for (const assessment of assessments) {
     const category = assessment.technology.categories[0] ?? "Other";
-    (groups.get(category) ?? groups.set(category, []).get(category))?.push(assessment);
+    const group = groups.get(category) ?? [];
+    group.push(assessment);
+    groups.set(category, group);
   }
   const worst = (list: Assessment[]) => Math.max(...list.map((a) => rank(a.status)));
   return new Map([...groups.entries()].sort(([, a], [, b]) => worst(b) - worst(a)));
@@ -118,22 +144,26 @@ function renderSummary(assessments: Assessment[]): void {
 function render(result: TabResult | undefined): void {
   const results = document.getElementById("results");
   const host = document.getElementById("host");
-  if (!results || !host) {
+  const state = document.getElementById("state");
+  if (!results || !host || !state) {
     return;
   }
   results.replaceChildren();
   if (!result) {
-    host.textContent = "";
+    host.textContent = "No scan yet";
+    state.textContent = "";
     renderSummary([]);
-    results.append(
-      element("div", "empty", "No scan for this page yet. Reload it or press Rescan."),
-    );
+    results.append(element("div", "empty", "Reload the page or press Rescan to analyse it."));
     return;
   }
   host.textContent = new URL(result.url).host;
+  state.textContent =
+    result.phase === "detected"
+      ? "Checking CVEs…"
+      : `${result.assessments.length} technolog${result.assessments.length === 1 ? "y" : "ies"}`;
   renderSummary(result.assessments);
   if (result.assessments.length === 0) {
-    results.append(element("div", "empty", "No technologies detected."));
+    results.append(element("div", "empty", "No technologies detected on this page."));
     return;
   }
   for (const [category, assessments] of groupByCategory(result.assessments)) {
@@ -146,7 +176,19 @@ function render(result: TabResult | undefined): void {
   }
 }
 
-/** The active tab, or the tab named by `?tab=<id>` when the popup is opened as a page for debugging. */
+function showTheme(theme: Theme): void {
+  applyTheme(theme);
+  const button = document.getElementById("theme");
+  if (!button) {
+    return;
+  }
+  button.title = THEME_TITLES[theme];
+  for (const icon of button.querySelectorAll<SVGElement>(".icon")) {
+    icon.toggleAttribute("hidden", !icon.classList.contains(`icon-${theme}`));
+  }
+}
+
+/** The active tab, or the tab named by `?tab=<id>` when opened as a page for debugging. */
 async function activeTabId(): Promise<number | undefined> {
   const override = new URLSearchParams(window.location.search).get("tab");
   if (override !== null && /^\d+$/.test(override)) {
@@ -162,6 +204,17 @@ async function load(tabId: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  let { theme } = await loadSettings();
+  showTheme(theme);
+  document.getElementById("theme")?.addEventListener("click", () => {
+    theme = nextTheme(theme);
+    showTheme(theme);
+    void saveSettings({ theme });
+  });
+  document.getElementById("settings")?.addEventListener("click", () => {
+    void chrome.runtime.openOptionsPage();
+  });
+
   const tabId = await activeTabId();
   if (tabId === undefined) {
     render(undefined);
@@ -176,9 +229,6 @@ async function main(): Promise<void> {
   document.getElementById("rescan")?.addEventListener("click", () => {
     const message: RuntimeMessage = { type: "rescan", tabId };
     void chrome.runtime.sendMessage(message);
-  });
-  document.getElementById("settings")?.addEventListener("click", () => {
-    void chrome.runtime.openOptionsPage();
   });
 }
 

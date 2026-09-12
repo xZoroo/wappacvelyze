@@ -1,7 +1,8 @@
-import type { Settings } from "./lib/types.ts";
-import { SETTINGS_KEY } from "./messages.ts";
+import type { Theme } from "./lib/types.ts";
+import { applyTheme, loadSettings, saveSettings } from "./settings.ts";
 
-const input = document.getElementById("api-key") as HTMLInputElement | null;
+const apiKey = document.getElementById("api-key") as HTMLInputElement | null;
+const theme = document.getElementById("theme") as HTMLSelectElement | null;
 const status = document.getElementById("status");
 
 function flash(text: string): void {
@@ -14,17 +15,26 @@ function flash(text: string): void {
 }
 
 async function load(): Promise<void> {
-  const items = await chrome.storage.local.get(SETTINGS_KEY);
-  const settings = items[SETTINGS_KEY] as Partial<Settings> | undefined;
-  if (input) {
-    input.value = settings?.nvdApiKey ?? "";
+  const settings = await loadSettings();
+  applyTheme(settings.theme);
+  if (apiKey) {
+    apiKey.value = settings.nvdApiKey;
+  }
+  if (theme) {
+    theme.value = settings.theme;
   }
 }
 
+theme?.addEventListener("change", () => {
+  applyTheme(theme.value as Theme);
+});
+
 document.getElementById("form")?.addEventListener("submit", (event) => {
   event.preventDefault();
-  const settings: Settings = { nvdApiKey: input?.value.trim() ?? "" };
-  void chrome.storage.local.set({ [SETTINGS_KEY]: settings }).then(() => flash("Saved"));
+  void saveSettings({
+    nvdApiKey: apiKey?.value.trim() ?? "",
+    theme: (theme?.value as Theme | undefined) ?? "auto",
+  }).then(() => flash("Saved"));
 });
 
 document.getElementById("clear-cache")?.addEventListener("click", () => {

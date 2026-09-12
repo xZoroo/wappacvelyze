@@ -13,7 +13,10 @@ interface RuntimeRules {
 
 const rules = runtimeRulesJson as RuntimeRules;
 const MAX_ELEMENTS_PER_SELECTOR = 20;
-const RECOLLECT_DELAY_MS = 2500;
+// Frameworks expose their globals whenever their bundles finish booting, which on heavy
+// pages can be well after document_idle; sample on a widening schedule and report changes.
+const SAMPLE_DELAYS_MS = [500, 1500, 3000, 6000, 12000, 25000];
+let lastReport = "";
 
 function scalar(value: unknown): string | undefined {
   if (value === undefined || value === null) {
@@ -80,12 +83,14 @@ function collect(): PageEvidence {
   return { js, domProperties };
 }
 
-function report(): void {
-  const message: PageMessage = {
-    source: PAGE_MESSAGE_SOURCE,
-    kind: "page-evidence",
-    evidence: collect(),
-  };
+function report(force = false): void {
+  const evidence = collect();
+  const serialized = JSON.stringify(evidence);
+  if (!force && serialized === lastReport) {
+    return;
+  }
+  lastReport = serialized;
+  const message: PageMessage = { source: PAGE_MESSAGE_SOURCE, kind: "page-evidence", evidence };
   window.postMessage(message, window.location.origin);
 }
 
@@ -96,10 +101,11 @@ window.addEventListener("message", (event: MessageEvent<PageMessage>) => {
     data?.source === PAGE_MESSAGE_SOURCE &&
     data.kind === "collect-request"
   ) {
-    report();
+    report(true);
   }
 });
 
-report();
-// Frameworks often finish booting after document_idle; a second pass catches their globals.
-setTimeout(report, RECOLLECT_DELAY_MS);
+report(true);
+for (const delay of SAMPLE_DELAYS_MS) {
+  setTimeout(report, delay);
+}
