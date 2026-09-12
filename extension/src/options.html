@@ -4,58 +4,30 @@
     <meta charset="utf-8" />
     <title>WappaCVElyze settings</title>
     <link rel="stylesheet" href="popup.css" />
-    <style>
-      body {
-        width: auto;
-        max-height: none;
-        padding: 16px;
-      }
-      form {
-        display: grid;
-        gap: 10px;
-        max-width: 460px;
-      }
-      label {
-        font-weight: 600;
-        color: var(--heading);
-      }
-      input {
-        font: inherit;
-        padding: 6px 8px;
-        border-radius: 5px;
-        border: 1px solid var(--border);
-        background: var(--surface);
-        color: var(--text);
-        width: 100%;
-      }
-      .help {
-        font-size: 11px;
-        color: var(--muted);
-      }
-      .actions {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      #status {
-        font-size: 11px;
-        color: var(--green);
-      }
-    </style>
   </head>
-  <body>
-    <form id="form">
-      <label for="api-key">NVD API key</label>
-      <input id="api-key" type="password" autocomplete="off" spellcheck="false" />
-      <p class="help">
-        Optional. Without a key NVD allows 5 lookups per 30 seconds; with one, 50. Request a free
-        key at nvd.nist.gov/developers/request-an-api-key. Stored only in this browser's extension
-        storage.
-      </p>
+  <body class="options">
+    <form id="form" class="form">
+      <div class="field">
+        <label for="theme">Appearance</label>
+        <select id="theme">
+          <option value="auto">Follow system</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="api-key">NVD API key</label>
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false" />
+        <p class="help">
+          Optional. Without a key NVD allows 5 lookups per 30 seconds; with one, 50. Request a free
+          key at nvd.nist.gov/developers/request-an-api-key. Stored only in this browser's extension
+          storage.
+        </p>
+      </div>
       <div class="actions">
         <button type="submit" class="button">Save</button>
         <button type="button" id="clear-cache" class="button button-quiet">Clear CVE cache</button>
-        <span id="status"></span>
+        <span id="status" class="status-text"></span>
       </div>
     </form>
     <script src="options.js"></script>
