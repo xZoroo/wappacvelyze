@@ -67,6 +67,27 @@ func TestOpenCacheRejectsCorruptFile(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomicIgnoresPlantedSymlink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "nvd.json")
+	if err := os.Symlink(victim, target+".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(target, []byte("cache")); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(victim); string(data) != "original" {
+		t.Errorf("victim overwritten: %q", data)
+	}
+	if data, _ := os.ReadFile(target); string(data) != "cache" {
+		t.Errorf("target = %q", data)
+	}
+}
+
 func TestCacheClear(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nvd.json")
 	c, err := OpenCache(path, time.Hour)

@@ -3,6 +3,7 @@
 
 import runtimeRulesJson from "./generated/runtime-rules.json";
 import type { DomEvidence } from "./lib/detect.ts";
+import { emptyRecord, sanitizePageEvidence, type PageAllowList } from "./lib/evidence.ts";
 import {
   PAGE_MESSAGE_SOURCE,
   type CollectedEvidence,
@@ -12,22 +13,37 @@ import {
 } from "./messages.ts";
 
 interface RuntimeRules {
-  dom?: { selector: string; exists?: boolean; text?: boolean; attributes?: string[] }[];
+  javascriptProperties?: string[];
+  dom?: {
+    selector: string;
+    exists?: boolean;
+    text?: boolean;
+    attributes?: string[];
+    properties?: string[];
+  }[];
 }
 
 const rules = runtimeRulesJson as RuntimeRules;
-const MAX_HTML_BYTES = 500_000;
-const MAX_INLINE_SCRIPT_BYTES = 50_000;
-const MAX_INLINE_SCRIPTS = 100;
+const allowList: PageAllowList = {
+  chains: new Set(rules.javascriptProperties ?? []),
+  domProperties: new Map(
+    (rules.dom ?? [])
+      .filter((rule) => rule.properties?.length)
+      .map((rule) => [rule.selector, new Set(rule.properties)]),
+  ),
+};
+const MAX_HTML_BYTES = 250_000;
+const MAX_INLINE_SCRIPT_BYTES = 20_000;
+const MAX_INLINE_SCRIPTS = 40;
 const MAX_ELEMENTS_PER_SELECTOR = 20;
 const MAX_TEXT_LENGTH = 500;
 const PAGE_EVIDENCE_TIMEOUT_MS = 3000;
 
-let pageEvidence: PageEvidence = { js: {}, domProperties: {} };
+let pageEvidence: PageEvidence = { js: emptyRecord(), domProperties: emptyRecord() };
 let sentOnce = false;
 
 function collectMeta(): Record<string, string[]> {
-  const meta: Record<string, string[]> = {};
+  const meta = emptyRecord<string[]>();
   for (const element of document.querySelectorAll("meta")) {
     const name = (
       element.getAttribute("name") ??
@@ -43,7 +59,7 @@ function collectMeta(): Record<string, string[]> {
 }
 
 function collectDom(): Record<string, DomEvidence> {
-  const dom: Record<string, DomEvidence> = {};
+  const dom = emptyRecord<DomEvidence>();
   for (const rule of rules.dom ?? []) {
     let elements: Element[];
     try {
@@ -54,7 +70,12 @@ function collectDom(): Record<string, DomEvidence> {
     if (elements.length === 0) {
       continue;
     }
-    const evidence: DomEvidence = { exists: true, text: [], attributes: {}, properties: {} };
+    const evidence: DomEvidence = {
+      exists: true,
+      text: [],
+      attributes: emptyRecord(),
+      properties: emptyRecord(),
+    };
     if (rule.text) {
       evidence.text = elements
         .map((element) => (element.textContent ?? "").trim().slice(0, MAX_TEXT_LENGTH))
@@ -75,7 +96,12 @@ function collectDom(): Record<string, DomEvidence> {
 
 function mergePageProperties(dom: Record<string, DomEvidence>): void {
   for (const [selector, properties] of Object.entries(pageEvidence.domProperties)) {
-    const evidence = (dom[selector] ??= { exists: true, text: [], attributes: {}, properties: {} });
+    const evidence = (dom[selector] ??= {
+      exists: true,
+      text: [],
+      attributes: emptyRecord(),
+      properties: emptyRecord(),
+    });
     evidence.properties = properties;
   }
 }
@@ -104,33 +130,6 @@ function send(): void {
   void chrome.runtime.sendMessage(message).catch(() => undefined);
 }
 
-/** Accepts only well-formed observations; the page can post anything to this channel. */
-function sanitize(evidence: unknown): PageEvidence | null {
-  if (typeof evidence !== "object" || evidence === null) {
-    return null;
-  }
-  const { js, domProperties } = evidence as Partial<PageEvidence>;
-  const cleanJs: Record<string, string> = {};
-  for (const [chain, value] of Object.entries(js ?? {})) {
-    if (typeof value === "string") {
-      cleanJs[chain] = value.slice(0, MAX_TEXT_LENGTH);
-    }
-  }
-  const cleanDom: Record<string, Record<string, string[]>> = {};
-  for (const [selector, properties] of Object.entries(domProperties ?? {})) {
-    const clean: Record<string, string[]> = {};
-    for (const [name, values] of Object.entries(properties ?? {})) {
-      if (Array.isArray(values)) {
-        clean[name] = values
-          .filter((v): v is string => typeof v === "string")
-          .slice(0, MAX_ELEMENTS_PER_SELECTOR);
-      }
-    }
-    cleanDom[selector] = clean;
-  }
-  return { js: cleanJs, domProperties: cleanDom };
-}
-
 window.addEventListener("message", (event: MessageEvent<PageMessage>) => {
   const data = event.data;
   if (
@@ -140,11 +139,8 @@ window.addEventListener("message", (event: MessageEvent<PageMessage>) => {
   ) {
     return;
   }
-  const clean = sanitize(data.evidence);
-  if (clean) {
-    pageEvidence = clean;
-    send();
-  }
+  pageEvidence = sanitizePageEvidence(data.evidence, allowList);
+  send();
 });
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage) => {

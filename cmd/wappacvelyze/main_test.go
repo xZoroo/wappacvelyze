@@ -110,6 +110,22 @@ func TestDetail(t *testing.T) {
 	}
 }
 
+func TestTableRowStripsControlCharacters(t *testing.T) {
+	a := cve.Assessment{
+		Technology: detect.Technology{Name: "Ngi\x1b[31mnx", Version: "1.2\x1b]0;pwned\a"},
+		Status:     cve.StatusUnknown,
+		Reason:     "why\r\n",
+	}
+	for _, cell := range tableRow(a) {
+		if strings.ContainsAny(cell, "\x1b\r\n\a") {
+			t.Errorf("control characters survived in %q", cell)
+		}
+	}
+	if got := tableRow(a)[0]; got != "Ngi[31mnx" {
+		t.Errorf("name = %q", got)
+	}
+}
+
 func TestWriteTableAlignsColumns(t *testing.T) {
 	results := []scanResult{{URL: "https://a.example", Technologies: []cve.Assessment{
 		{Technology: detect.Technology{Name: "Nginx", Version: "1.18.0"}, Status: cve.StatusCurrent},
