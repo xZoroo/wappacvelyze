@@ -150,6 +150,9 @@ function toTechnology(fingerprint: Fingerprint, version: string): Technology {
   if (fingerprint.website) {
     technology.website = fingerprint.website;
   }
+  if (fingerprint.icon) {
+    technology.icon = fingerprint.icon;
+  }
   return technology;
 }
 

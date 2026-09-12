@@ -19,6 +19,7 @@
 /extension/dist/
 /extension/dist-firefox/
 /extension/src/generated/
+/extension/.cache/
 
 # macOS
 .DS_Store

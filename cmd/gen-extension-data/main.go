@@ -35,7 +35,7 @@ func run(dir string) error {
 		return fmt.Errorf("parse fingerprints: %w", err)
 	}
 	for _, app := range db.Apps {
-		for _, key := range []string{"description", "icon", "css"} {
+		for _, key := range []string{"description", "css"} {
 			delete(app, key)
 		}
 	}

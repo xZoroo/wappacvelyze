@@ -49,6 +49,7 @@ describe("analyze", () => {
     expect(find("WordPress", evidence)?.version).toBe("6.4.1");
     expect(find("jQuery", evidence)?.version).toBe("3.6.0");
     expect(find("Nginx", evidence)?.categories).toContain("Web servers");
+    expect(find("Nginx", evidence)?.icon).toBe("Nginx.svg");
   });
 
   it("reports detected technologies without a version", () => {
