@@ -17,14 +17,9 @@ import {
 import { fetchKev, type KevCatalog } from "./lib/kev.ts";
 import { NvdClient } from "./lib/nvd.ts";
 import { ChromeStore } from "./lib/store.ts";
-import type { Assessment, Settings, Status, TabResult } from "./lib/types.ts";
-import {
-  headersKey,
-  resultKey,
-  SETTINGS_KEY,
-  type CollectedEvidence,
-  type RuntimeMessage,
-} from "./messages.ts";
+import type { Assessment, Status, TabResult } from "./lib/types.ts";
+import { headersKey, resultKey, type CollectedEvidence, type RuntimeMessage } from "./messages.ts";
+import { loadSettings } from "./settings.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const KEV_CACHE_KEY = "catalog";
@@ -121,11 +116,6 @@ async function loadKev(): Promise<KevCatalog | null> {
   }
 }
 
-async function settings(): Promise<Settings> {
-  const stored = (await local.get(SETTINGS_KEY)) as Partial<Settings> | undefined;
-  return { nvdApiKey: stored?.nvdApiKey ?? "" };
-}
-
 function worst(assessments: Assessment[]): Status {
   let status: Status = "current";
   for (const assessment of assessments) {
@@ -161,10 +151,11 @@ function byUrgency(a: Assessment, b: Assessment): number {
   return rank(b.status) - rank(a.status) || a.technology.name.localeCompare(b.technology.name);
 }
 
+/** Stores a sorted snapshot; the caller's array keeps its order so in-progress loops stay valid. */
 async function publish(tabId: number, result: TabResult): Promise<void> {
-  result.assessments.sort(byUrgency);
-  await session.set(resultKey(tabId), result);
-  await updateBadge(tabId, result);
+  const snapshot: TabResult = { ...result, assessments: [...result.assessments].sort(byUrgency) };
+  await session.set(resultKey(tabId), snapshot);
+  await updateBadge(tabId, snapshot);
 }
 
 function sameOrigin(a: string, b: string): boolean {
@@ -187,7 +178,29 @@ async function headersFor(tabId: number, url: string): Promise<Record<string, st
   return stored.headers;
 }
 
+/** Latest run per tab; a newer evidence message supersedes any run still in progress. */
+const generation = new Map<number, number>();
+
+function assessmentKey(a: Assessment): string {
+  return `${a.technology.name}\u0000${a.technology.version ?? ""}`;
+}
+
+/** Verdicts already reached for the same technology and version carry over between runs. */
+async function priorVerdicts(tabId: number): Promise<Map<string, Assessment>> {
+  const prior = (await session.get(resultKey(tabId))) as TabResult | undefined;
+  const verdicts = new Map<string, Assessment>();
+  for (const a of prior?.assessments ?? []) {
+    if (a.reason !== "checking…") {
+      verdicts.set(assessmentKey(a), a);
+    }
+  }
+  return verdicts;
+}
+
 async function handleEvidence(tabId: number, collected: CollectedEvidence): Promise<void> {
+  const run = (generation.get(tabId) ?? 0) + 1;
+  generation.set(tabId, run);
+  const superseded = () => generation.get(tabId) !== run;
   const evidence: Evidence = {
     headers: await headersFor(tabId, collected.url),
     cookies: await cookiesFor(collected.url),
@@ -202,31 +215,44 @@ async function handleEvidence(tabId: number, collected: CollectedEvidence): Prom
   if (truncated) {
     console.warn("wappacvelyze: detection budget exhausted on", collected.url);
   }
+  const prior = await priorVerdicts(tabId);
   const result: TabResult = {
     url: collected.url,
     updatedAt: Date.now(),
     phase: "detected",
-    assessments: technologies.map((technology) => ({
-      technology,
-      status: "unknown",
-      reason: "checking…",
-    })),
+    assessments: technologies.map(
+      (technology) =>
+        prior.get(assessmentKey({ technology, status: "unknown" })) ?? {
+          technology,
+          status: "unknown",
+          reason: "checking…",
+        },
+    ),
   };
+  if (superseded()) {
+    return;
+  }
   await publish(tabId, result);
 
-  const { nvdApiKey } = await settings();
+  const { nvdApiKey } = await loadSettings();
   const assessor = new Assessor(new NvdClient({ apiKey: nvdApiKey }), await loadKev(), nvdCache);
-  for (let i = 0; i < technologies.length; i++) {
-    const technology = technologies[i];
-    if (!technology) {
+  for (let i = 0; i < result.assessments.length; i++) {
+    const pending = result.assessments[i];
+    if (!pending || pending.reason !== "checking…") {
       continue;
     }
-    result.assessments[i] = await assessor.assess(technology);
+    const assessment = await assessor.assess(pending.technology);
+    if (superseded()) {
+      return;
+    }
+    result.assessments[i] = assessment;
     result.updatedAt = Date.now();
     await publish(tabId, result);
   }
   result.phase = "done";
-  await publish(tabId, result);
+  if (!superseded()) {
+    await publish(tabId, result);
+  }
 }
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender) => {
@@ -240,11 +266,13 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  generation.delete(tabId);
   void session.remove([resultKey(tabId), headersKey(tabId)]);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   if (change.status === "loading") {
+    generation.set(tabId, (generation.get(tabId) ?? 0) + 1);
     void session.remove([resultKey(tabId)]);
     void chrome.action.setBadgeText({ tabId, text: "" }).catch(() => undefined);
   }
