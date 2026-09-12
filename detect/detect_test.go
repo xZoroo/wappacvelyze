@@ -53,6 +53,9 @@ func TestAnalyzeExtractsVersionsAndCPEs(t *testing.T) {
 			t.Errorf("%s CPE = %q, want %q", tt.name, got.CPE, tt.cpe)
 		}
 	}
+	if nginx, _ := findTech(techs, "Nginx"); nginx.Icon != "Nginx.svg" {
+		t.Errorf("Nginx icon = %q, want Nginx.svg", nginx.Icon)
+	}
 }
 
 func TestAnalyzeWithoutVersion(t *testing.T) {

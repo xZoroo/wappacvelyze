@@ -2,7 +2,7 @@
 
 import { rank } from "./lib/classify.ts";
 import { isSafeLink } from "./lib/evidence.ts";
-import type { Assessment, Status, TabResult, Theme } from "./lib/types.ts";
+import type { Assessment, Status, TabResult, Technology, Theme } from "./lib/types.ts";
 import { resultKey, type RuntimeMessage } from "./messages.ts";
 import { applyTheme, loadSettings, nextTheme, saveSettings } from "./settings.ts";
 
@@ -93,10 +93,26 @@ function detail(assessment: Assessment): HTMLElement | null {
   return node;
 }
 
+/** The technology's logo when bundled, otherwise its initial; a broken image falls back too. */
+function avatar(technology: Technology): HTMLElement {
+  const initial = element("span", "avatar", technology.name.charAt(0).toUpperCase());
+  if (!technology.icon) {
+    return initial;
+  }
+  const image = document.createElement("img");
+  image.className = "avatar-img";
+  image.alt = "";
+  image.src = `icons/${encodeURIComponent(technology.icon)}`;
+  image.addEventListener("error", () => holder.replaceWith(initial));
+  const holder = element("span", "avatar avatar-logo");
+  holder.append(image);
+  return holder;
+}
+
 function row(assessment: Assessment): HTMLElement {
   const { technology } = assessment;
   const node = element("div", "row");
-  node.append(element("span", "avatar", technology.name.charAt(0).toUpperCase()));
+  node.append(avatar(technology));
   const name = element("span", "name");
   name.append(technology.website ? link(technology.website, technology.name) : technology.name);
   if (technology.version) {

@@ -5,12 +5,12 @@
   "type": "module",
   "description": "Browser extension: technologies behind a site, their versions, and known CVEs",
   "scripts": {
-    "data": "go run ../cmd/gen-extension-data src/generated",
+    "data": "go run ../cmd/gen-extension-data src/generated && node scripts/fetch-icons.mjs",
     "build": "npm run data && node build.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src test",
-    "fmt": "oxfmt src test build.mjs"
+    "fmt": "oxfmt src test build.mjs scripts"
   },
   "devDependencies": {
     "@types/chrome": "0.2.9",

@@ -12,6 +12,7 @@ export interface RawDomRule {
 export interface RawTechnology {
   cats: number[];
   website?: string;
+  icon?: string;
   cpe?: string;
   implies?: string[];
   headers?: Record<string, string>;
@@ -41,6 +42,7 @@ export interface Technology {
   name: string;
   categories: string[];
   website: string;
+  icon: string;
   cpe: string;
   implies: string[];
   headers: Record<string, Pattern>;
@@ -165,6 +167,7 @@ export function compileTechnology(
     name,
     categories: raw.cats.map((id) => categories[String(id)]?.name ?? `Category ${id}`),
     website: raw.website ?? "",
+    icon: raw.icon ?? "",
     cpe: raw.cpe ?? "",
     implies: (raw.implies ?? []).map(impliedName),
     headers: parseMap(raw.headers, true),

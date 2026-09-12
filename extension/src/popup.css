@@ -276,6 +276,20 @@ body {
   font-size: 13px;
   display: grid;
   place-items: center;
+  overflow: hidden;
+}
+
+/* Logos are designed for light backgrounds, so the tile stays light in both themes. */
+.avatar-logo {
+  background: #fff;
+  border: 1px solid var(--border);
+}
+
+.avatar-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
 }
 
 .name {
