@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/xZoroo/wappacvelyze/cve"
@@ -113,7 +114,18 @@ func tableRow(a cve.Assessment) []string {
 		version = "—"
 	}
 	label, _ := statusStyle(a.Status)
-	return []string{a.Technology.Name, version, label, detail(a)}
+	return []string{printable(a.Technology.Name), printable(version), label, printable(detail(a))}
+}
+
+// printable drops control characters so a server cannot smuggle terminal escape
+// sequences into the table through a crafted version string or header.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // detail summarises the most urgent CVE with a link that confirms it, or explains why

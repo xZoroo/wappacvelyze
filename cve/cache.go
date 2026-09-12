@@ -84,14 +84,25 @@ func (c *Cache) Clear() error {
 	return nil
 }
 
-// writeFileAtomic replaces path in one rename so a crash never leaves a partial file.
+// writeFileAtomic replaces path in one rename so a crash never leaves a partial file. The
+// temporary file is created exclusively with a random name, so a pre-planted symlink
+// cannot redirect the write.
 func writeFileAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

@@ -3,6 +3,7 @@
 // receives data from the extension; it only reports what it observes.
 
 import runtimeRulesJson from "./generated/runtime-rules.json";
+import { emptyRecord } from "./lib/evidence.ts";
 import { PAGE_MESSAGE_SOURCE, type PageEvidence, type PageMessage } from "./messages.ts";
 
 interface RuntimeRules {
@@ -45,14 +46,14 @@ function readChain(chain: string): string | undefined {
 }
 
 function collect(): PageEvidence {
-  const js: Record<string, string> = {};
+  const js = emptyRecord<string>();
   for (const chain of rules.javascriptProperties ?? []) {
     const value = readChain(chain);
     if (value !== undefined) {
       js[chain] = value;
     }
   }
-  const domProperties: Record<string, Record<string, string[]>> = {};
+  const domProperties = emptyRecord<Record<string, string[]>>();
   for (const rule of rules.dom ?? []) {
     if (!rule.properties?.length) {
       continue;
@@ -63,7 +64,7 @@ function collect(): PageEvidence {
     } catch {
       continue;
     }
-    const observed: Record<string, string[]> = {};
+    const observed = emptyRecord<string[]>();
     for (const property of rule.properties) {
       const values = elements
         .map((element) => scalar((element as unknown as Record<string, unknown>)[property]))

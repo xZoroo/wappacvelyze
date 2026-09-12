@@ -60,6 +60,29 @@ export interface Category {
 
 const NEVER = /(?!)/;
 
+// Unbounded quantifiers are the main source of catastrophic backtracking in V8's regex
+// engine. Bounding them the same way wappalyzergo does keeps both engines equivalent while
+// capping how far a crafted page can push a single pattern.
+const MAX_REPEAT = 250;
+
+export function boundQuantifiers(source: string): string {
+  let bounded = "";
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (char === "\\") {
+      bounded += char + (source[i + 1] ?? "");
+      i++;
+    } else if (char === "+") {
+      bounded += `{1,${MAX_REPEAT}}`;
+    } else if (char === "*") {
+      bounded += `{0,${MAX_REPEAT}}`;
+    } else {
+      bounded += char;
+    }
+  }
+  return bounded;
+}
+
 /**
  * Parses `regex\;version:\1\;confidence:50`. An empty regex matches anything, which is
  * how existence checks are expressed. Patterns that are not valid JavaScript regular
@@ -69,9 +92,13 @@ export function parsePattern(raw: string): Pattern {
   const [source = "", ...attributes] = raw.split("\\;");
   const pattern: Pattern = { regex: NEVER, version: "", confidence: 100 };
   try {
-    pattern.regex = new RegExp(source, "i");
+    pattern.regex = new RegExp(boundQuantifiers(source), "i");
   } catch {
-    return pattern;
+    try {
+      pattern.regex = new RegExp(source, "i");
+    } catch {
+      return pattern;
+    }
   }
   for (const attribute of attributes) {
     const separator = attribute.indexOf(":");
@@ -149,6 +176,24 @@ export function compileTechnology(
     js: parseMap(raw.js, false),
     dom: parseDom(raw.dom),
   };
+}
+
+/** Header and cookie names any fingerprint reads, so collection can be limited to them. */
+export function referencedNames(database: Map<string, Technology>): {
+  headers: Set<string>;
+  cookies: Set<string>;
+} {
+  const headers = new Set<string>();
+  const cookies = new Set<string>();
+  for (const technology of database.values()) {
+    for (const name of Object.keys(technology.headers)) {
+      headers.add(name);
+    }
+    for (const name of Object.keys(technology.cookies)) {
+      cookies.add(name);
+    }
+  }
+  return { headers, cookies };
 }
 
 export function compileDatabase(

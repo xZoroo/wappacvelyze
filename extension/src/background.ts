@@ -5,9 +5,11 @@ import categoriesJson from "./generated/categories.json";
 import technologiesJson from "./generated/technologies.json";
 import { Cache } from "./lib/cache.ts";
 import { Assessor, rank } from "./lib/classify.ts";
-import { analyze, type Evidence } from "./lib/detect.ts";
+import { analyzeWithBudget, type Evidence } from "./lib/detect.ts";
+import { emptyRecord } from "./lib/evidence.ts";
 import {
   compileDatabase,
+  referencedNames,
   type Category,
   type RawTechnology,
   type Technology as Fingerprint,
@@ -33,6 +35,19 @@ const nvdCache = new Cache(local, "nvd:", DAY_MS);
 const kevCache = new Cache(local, "kev:", DAY_MS);
 
 let database: Map<string, Fingerprint> | null = null;
+let wanted: { headers: Set<string>; cookies: Set<string> } | null = null;
+
+/** Only header and cookie names some fingerprint reads are ever collected or stored. */
+function wantedNames(): { headers: Set<string>; cookies: Set<string> } {
+  wanted ??= referencedNames(fingerprints());
+  return wanted;
+}
+
+/** Response headers of a tab's last main-frame load, bound to the URL they came from. */
+interface StoredHeaders {
+  url: string;
+  headers: Record<string, string[]>;
+}
 
 function fingerprints(): Map<string, Fingerprint> {
   database ??= compileDatabase(
@@ -48,13 +63,15 @@ function rememberHeaders(
   if (details.tabId < 0 || details.type !== "main_frame") {
     return undefined;
   }
-  const headers: Record<string, string[]> = {};
+  const headers = emptyRecord<string[]>();
   for (const header of details.responseHeaders ?? []) {
-    if (header.value !== undefined) {
-      (headers[header.name.toLowerCase()] ??= []).push(header.value);
+    const name = header.name.toLowerCase();
+    if (header.value !== undefined && wantedNames().headers.has(name)) {
+      (headers[name] ??= []).push(header.value);
     }
   }
-  void session.set(headersKey(details.tabId), headers);
+  const stored: StoredHeaders = { url: details.url, headers };
+  void session.set(headersKey(details.tabId), stored);
   return undefined;
 }
 
@@ -75,10 +92,13 @@ try {
 }
 
 async function cookiesFor(url: string): Promise<Record<string, string>> {
-  const cookies: Record<string, string> = {};
+  const cookies = emptyRecord<string>();
   try {
     for (const cookie of await chrome.cookies.getAll({ url })) {
-      cookies[cookie.name.toLowerCase()] = cookie.value;
+      const name = cookie.name.toLowerCase();
+      if (wantedNames().cookies.has(name)) {
+        cookies[name] = cookie.value;
+      }
     }
   } catch {
     // Cookie access can be denied for some schemes; detection continues without them.
@@ -147,11 +167,29 @@ async function publish(tabId: number, result: TabResult): Promise<void> {
   await updateBadge(tabId, result);
 }
 
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Headers are only used when they came from the page now being analysed, not from a
+ * previous document that loaded in the same tab (e.g. after a back-forward-cache restore).
+ */
+async function headersFor(tabId: number, url: string): Promise<Record<string, string[]>> {
+  const stored = (await session.get(headersKey(tabId))) as StoredHeaders | undefined;
+  if (!stored || !sameOrigin(stored.url, url)) {
+    return emptyRecord();
+  }
+  return stored.headers;
+}
+
 async function handleEvidence(tabId: number, collected: CollectedEvidence): Promise<void> {
-  const headers =
-    ((await session.get(headersKey(tabId))) as Record<string, string[]> | undefined) ?? {};
   const evidence: Evidence = {
-    headers,
+    headers: await headersFor(tabId, collected.url),
     cookies: await cookiesFor(collected.url),
     html: collected.html,
     scripts: collected.scripts,
@@ -160,7 +198,10 @@ async function handleEvidence(tabId: number, collected: CollectedEvidence): Prom
     js: collected.js,
     dom: collected.dom,
   };
-  const technologies = analyze(evidence, fingerprints());
+  const { technologies, truncated } = analyzeWithBudget(evidence, fingerprints());
+  if (truncated) {
+    console.warn("wappacvelyze: detection budget exhausted on", collected.url);
+  }
   const result: TabResult = {
     url: collected.url,
     updatedAt: Date.now(),

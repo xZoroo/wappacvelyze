@@ -87,3 +87,27 @@ describe("analyze", () => {
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
   });
 });
+
+describe("analyzeWithBudget", () => {
+  it("stops checking fingerprints once the budget is spent", async () => {
+    const { analyzeWithBudget } = await import("../src/lib/detect.ts");
+    let clock = 0;
+    const result = analyzeWithBudget({ headers: { server: ["nginx/1.24.0"] } }, db, {
+      budgetMs: 5,
+      now: () => (clock += 1),
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.technologies.length).toBeLessThan(db.size);
+    expect(analyzeWithBudget({ headers: { server: ["nginx/1.24.0"] } }, db).truncated).toBe(false);
+  });
+});
+
+describe("boundQuantifiers", () => {
+  it("bounds bare quantifiers and leaves escaped ones alone", async () => {
+    const { boundQuantifiers } = await import("../src/lib/fingerprints.ts");
+    expect(boundQuantifiers("a+b*c\\+d\\*")).toBe("a{1,250}b{0,250}c\\+d\\*");
+    expect(new RegExp(boundQuantifiers("^nginx(?:/([\\d.]+))?$"), "i").exec("nginx/1.2")?.[1]).toBe(
+      "1.2",
+    );
+  });
+});

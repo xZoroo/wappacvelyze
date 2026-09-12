@@ -397,6 +397,27 @@ wappacvelyze scan http://127.0.0.1:8765
   exploitability.
 - **Rate limits.** Without an NVD API key, scanning many distinct technology versions is
   slow by design (5 requests / 30 s).
+- **Regex cost in the extension.** Fingerprints are regular expressions run against page
+  content inside the browser, where the regex engine backtracks. Inputs are capped, bare
+  quantifiers are bounded the same way wappalyzergo does, and detection stops after a
+  3-second budget, but a deliberately pathological page can still make a scan of itself
+  slow or incomplete (the popup then shows partial results). The CLI's Go regex engine is
+  linear-time and unaffected.
+
+## Security notes
+
+- Nothing observed on a page leaves the browser or the machine. The only outbound requests
+  are to NVD (a versioned CPE name) and CISA (the public KEV feed).
+- Page content is untrusted input everywhere: the extension only regex-matches it, never
+  renders it as HTML, validates page-script observations against the fingerprint rule set,
+  and only links to `http(s)` URLs. Captured headers and cookies are limited to the names
+  fingerprints actually read, bound to the page they came from, and kept only in
+  session storage until the tab navigates or closes.
+- The CLI strips control characters from anything a server can influence before printing
+  to the terminal, verifies TLS, caps response bodies at 5 MB, and writes its caches with
+  exclusive temporary files in the user's cache directory only.
+- Store the NVD API key in the `NVD_API_KEY` environment variable rather than on the command
+  line, where other local users could read it from the process list.
 
 ---
 
