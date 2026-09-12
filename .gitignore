@@ -1,0 +1,15 @@
+# Build output
+/wappacvelyze
+/dist/
+
+# Reference checkouts of upstream projects; each is its own git repository
+/wappalyzer/
+/wappalyzergo/
+/webanalyze/
+/webappanalyzer/
+
+# Local tooling state
+/.claude/settings.local.json
+/.claude/
+/.agents/
+/skills-lock.json
