@@ -29,6 +29,7 @@ type Technology struct {
 	CPE        string   `json:"cpe,omitempty"`
 	Categories []string `json:"categories,omitempty"`
 	Website    string   `json:"website,omitempty"`
+	Icon       string   `json:"icon,omitempty"`
 }
 
 // Detector fingerprints HTTP responses.
@@ -88,6 +89,7 @@ func (d *Detector) Analyze(headers http.Header, body []byte) []Technology {
 			CPE:        info.CPE,
 			Categories: info.Categories,
 			Website:    info.Website,
+			Icon:       info.Icon,
 		})
 	}
 	sort.Slice(techs, func(i, j int) bool { return techs[i].Name < techs[j].Name })

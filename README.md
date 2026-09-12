@@ -272,8 +272,8 @@ The extension shows the same verdicts as the CLI when you click its toolbar icon
 page — and because it runs inside the rendered page it also sees JavaScript-only evidence
 (`jQuery.fn.jquery`, `React.version`, …) that a passive HTTP scan cannot.
 
-**What you see.** A popup listing detected technologies grouped by category. Each row has a
-status dot, the technology name (linked to its website), the detected version, a badge
+**What you see.** A popup listing detected technologies grouped by category. Each row has the
+technology's logo, its name (linked to its website), the detected version, a badge
 (`Current` / `Unknown` / `CVE-2024-4577` / `KEV · CVE-2021-44228`), and for red or critical
 rows the CVSS score, affected version range, and links to the NVD record or CISA KEV entry
 and the vendor advisory. Rows sort `Critical → Vulnerable → Unknown → Current`. The toolbar
@@ -281,8 +281,12 @@ badge shows how many technologies are vulnerable or critical.
 
 ### Build it
 
-Building needs Node 22+ and Go 1.25+ (Go generates the fingerprint data from the same
-wappalyzergo release the CLI uses, so both surfaces detect identically):
+Building needs Node 22+, Go 1.25+ and `tar` (Go generates the fingerprint data from the
+same wappalyzergo release the CLI uses, so both surfaces detect identically; a build script
+then downloads the technology logos the database references from
+[enthec/webappanalyzer](https://github.com/enthec/webappanalyzer), keeping those under 16 KB
+— larger or missing logos fall back to a letter tile). Both the data and the logos are
+generated into `extension/src/generated/` and never committed:
 
 ```sh
 make extension        # = cd extension && npm ci && npm run build

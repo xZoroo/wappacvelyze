@@ -7,6 +7,7 @@ export interface Technology {
   cpe?: string;
   categories: string[];
   website?: string;
+  icon?: string;
 }
 
 export type Status = "current" | "unknown" | "vulnerable" | "critical";
