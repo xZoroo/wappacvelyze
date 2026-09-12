@@ -146,6 +146,9 @@ func newAssessor(ctx context.Context, opts *scanOptions, stderr io.Writer) (*cve
 	if opts.noCVE {
 		return nil, nil
 	}
+	if err := requireCacheDir(opts.cacheDir); err != nil {
+		return nil, err
+	}
 	client := &http.Client{Timeout: 60 * time.Second}
 	kev, err := cve.LoadKEV(ctx, client, cve.DefaultKEVURL, filepath.Join(opts.cacheDir, kevFile), kevMaxAge)
 	if err != nil {
