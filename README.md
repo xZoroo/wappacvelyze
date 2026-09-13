@@ -379,6 +379,7 @@ extension/               Browser extension (TypeScript, Manifest V3)
   src/lib/               Detection engine and CVE pipeline, mirroring detect/ and cve/
   src/{background,content,page,popup,options}.ts
   test/                  vitest suites
+  store/                 Store listing assets and text (icons, screenshots, Chrome listing)
 Makefile                 build / install / test / extension shortcuts
 ```
 
