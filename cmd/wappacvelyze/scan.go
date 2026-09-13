@@ -24,8 +24,10 @@ type scanOptions struct {
 	failOn      cve.Status
 	apiKey      string
 	cacheDir    string
+	dbURL       string
 	timeout     time.Duration
 	noCVE       bool
+	noDB        bool
 	noColor     bool
 	urls        []string
 }
@@ -84,7 +86,9 @@ func parseScanOptions(args []string, stderr io.Writer) (*scanOptions, error) {
 		"exit 1 when any technology reaches this status: vulnerable or critical")
 	fs.StringVar(&o.apiKey, "nvd-api-key", os.Getenv("NVD_API_KEY"),
 		"NVD API key; raises the rate limit from 5 to 50 requests per 30s (env NVD_API_KEY)")
-	fs.StringVar(&o.cacheDir, "cache-dir", defaultCacheDir(), "directory for NVD and KEV caches")
+	fs.StringVar(&o.cacheDir, "cache-dir", defaultCacheDir(), "directory for the vulnerability database and caches")
+	fs.StringVar(&o.dbURL, "db-url", cve.DefaultDatabaseURL, "base URL of the prebuilt vulnerability database")
+	fs.BoolVar(&o.noDB, "no-db", false, "skip the prebuilt database and query NVD live for every technology")
 	fs.DurationVar(&o.timeout, "timeout", 15*time.Second, "per-request HTTP timeout")
 	fs.BoolVar(&o.noCVE, "no-cve", false, "detect technologies only; skip CVE lookups")
 	fs.BoolVar(&o.noColor, "no-color", false, "disable colored output (also honours NO_COLOR)")
@@ -115,8 +119,8 @@ func parseScanOptions(args []string, stderr io.Writer) (*scanOptions, error) {
 		if err != nil {
 			return nil, err
 		}
-		if status != cve.StatusVulnerable && status != cve.StatusCritical {
-			return nil, fmt.Errorf("--fail-on must be vulnerable or critical, got %q", failOn)
+		if status.Rank() < cve.StatusOutdated.Rank() || status == cve.StatusUnknown {
+			return nil, fmt.Errorf("--fail-on must be outdated, unsupported, vulnerable or critical, got %q", failOn)
 		}
 		o.failOn = status
 	}
@@ -140,8 +144,9 @@ func readTargets(path string) ([]string, error) {
 	return urls, nil
 }
 
-// newAssessor prepares CVE lookups, or returns nil when --no-cve is set. A stale KEV
-// catalog is used with a warning rather than aborting the scan.
+// newAssessor prepares lookups, or returns nil when --no-cve is set. The prebuilt database
+// is preferred; when it cannot be fetched the scan continues with live NVD lookups. Stale
+// copies are used with a warning rather than aborting.
 func newAssessor(ctx context.Context, opts *scanOptions, stderr io.Writer) (*cve.Assessor, error) {
 	if opts.noCVE {
 		return nil, nil
@@ -149,19 +154,31 @@ func newAssessor(ctx context.Context, opts *scanOptions, stderr io.Writer) (*cve
 	if err := requireCacheDir(opts.cacheDir); err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Minute}
+	assessor := &cve.Assessor{NVD: cve.NewNVDClient(client, opts.apiKey)}
+	if !opts.noDB {
+		database, err := cve.LoadDatabase(ctx, client, opts.dbURL, opts.cacheDir, dbMaxAge)
+		if err != nil {
+			fmt.Fprintln(stderr, "warning:", err)
+		}
+		assessor.DB = database
+	}
 	kev, err := cve.LoadKEV(ctx, client, cve.DefaultKEVURL, filepath.Join(opts.cacheDir, kevFile), kevMaxAge)
 	if err != nil {
-		if kev == nil {
+		if kev == nil && assessor.DB == nil {
 			return nil, err
 		}
-		fmt.Fprintln(stderr, "warning:", err)
+		if kev == nil {
+			fmt.Fprintln(stderr, "warning:", err)
+		}
 	}
+	assessor.KEV = kev
 	cache, err := cve.OpenCache(filepath.Join(opts.cacheDir, nvdFile), nvdTTL)
 	if err != nil {
 		return nil, err
 	}
-	return &cve.Assessor{NVD: cve.NewNVDClient(client, opts.apiKey), KEV: kev, Cache: cache}, nil
+	assessor.Cache = cache
+	return assessor, nil
 }
 
 func scanAll(

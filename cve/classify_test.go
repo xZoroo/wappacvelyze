@@ -19,33 +19,22 @@ var nginx = detect.Technology{
 	CPE:     "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*",
 }
 
-func TestLookupKey(t *testing.T) {
+func TestComparableVersion(t *testing.T) {
 	tests := []struct {
 		name       string
 		tech       detect.Technology
-		wantCPE    string
 		wantReason string
 	}{
-		{name: "ok", tech: nginx, wantCPE: testCPE},
-		{name: "no version", tech: detect.Technology{Name: "X", CPE: nginx.CPE},
-			wantReason: "version not disclosed"},
-		{name: "no cpe", tech: detect.Technology{Name: "X", Version: "1.0"},
-			wantReason: "no CPE mapping"},
-		{name: "coarse", tech: detect.Technology{Name: "PHP", Version: "8", CPE: nginx.CPE},
-			wantReason: "too coarse"},
-		{name: "bad cpe", tech: detect.Technology{Name: "X", Version: "1.0", CPE: "cpe:/a:x"},
-			wantReason: "malformed"},
-		{name: "not comparable", tech: detect.Technology{Name: "X", Version: "1.x", CPE: nginx.CPE},
-			wantReason: "not comparable"},
+		{name: "ok", tech: nginx},
+		{name: "no version", tech: detect.Technology{Name: "X", CPE: nginx.CPE}, wantReason: "version not disclosed"},
+		{name: "coarse", tech: detect.Technology{Name: "PHP", Version: "8"}, wantReason: "too coarse"},
+		{name: "not comparable", tech: detect.Technology{Name: "X", Version: "1.x"}, wantReason: "not comparable"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cpeName, reason := lookupKey(tt.tech)
-			if cpeName != tt.wantCPE {
-				t.Errorf("cpe = %q, want %q", cpeName, tt.wantCPE)
-			}
-			if !strings.Contains(reason, tt.wantReason) {
-				t.Errorf("reason = %q, want containing %q", reason, tt.wantReason)
+			v, reason := comparableVersion(tt.tech)
+			if (v == nil) != (tt.wantReason != "") || !strings.Contains(reason, tt.wantReason) {
+				t.Errorf("comparableVersion = %v, %q; want reason containing %q", v, reason, tt.wantReason)
 			}
 		})
 	}
@@ -55,12 +44,23 @@ func TestClassify(t *testing.T) {
 	vulns := []Vulnerability{{ID: "CVE-2021-A", Score: 5.3}, {ID: "CVE-2021-B", Score: 9.8}}
 	kev := &KEVCatalog{Vulnerabilities: []KEVEntry{{CVEID: "CVE-2021-A"}}}
 
-	current := Classify(nginx, testCPE, nil, kev)
+	current := Classify(nginx, testCPE, nil, kev, nil)
 	if current.Status != StatusCurrent || len(current.Vulnerabilities) != 0 {
 		t.Errorf("current = %+v", current)
 	}
+	outdated := Classify(nginx, testCPE, nil, nil, &LifecycleInfo{Cycle: "1.18", Latest: "1.18.1", Behind: true})
+	if outdated.Status != StatusOutdated || outdated.Lifecycle == nil {
+		t.Errorf("outdated = %+v", outdated)
+	}
+	eol := Classify(nginx, testCPE, nil, nil, &LifecycleInfo{Cycle: "1.18", EOL: true})
+	if eol.Status != StatusUnsupported {
+		t.Errorf("eol = %+v", eol)
+	}
+	if withVulns := Classify(nginx, testCPE, vulns, nil, &LifecycleInfo{EOL: true}); withVulns.Status != StatusVulnerable {
+		t.Errorf("vulnerabilities should outrank EOL: %+v", withVulns)
+	}
 
-	vulnerable := Classify(nginx, testCPE, vulns, nil)
+	vulnerable := Classify(nginx, testCPE, vulns, nil, nil)
 	if vulnerable.Status != StatusVulnerable {
 		t.Errorf("status = %q, want vulnerable", vulnerable.Status)
 	}
@@ -68,7 +68,7 @@ func TestClassify(t *testing.T) {
 		t.Errorf("highest score not first: %+v", vulnerable.Vulnerabilities)
 	}
 
-	critical := Classify(nginx, testCPE, vulns, kev)
+	critical := Classify(nginx, testCPE, vulns, kev, nil)
 	if critical.Status != StatusCritical {
 		t.Errorf("status = %q, want critical", critical.Status)
 	}
@@ -81,11 +81,35 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestOrderingPrefersExploitationSignals(t *testing.T) {
+	vulns := []Vulnerability{
+		{ID: "CVE-SCORE", Score: 9.9},
+		{ID: "CVE-EPSS", Score: 5.0, EPSS: 0.9},
+		{ID: "CVE-EXPLOIT", Score: 4.0, Exploits: []string{"nuclei"}},
+		{ID: "CVE-KEV", Score: 3.0, KEV: &KEVEntry{CVEID: "CVE-KEV"}},
+	}
+	got := Classify(nginx, testCPE, vulns, nil, nil)
+	var order []string
+	for _, v := range got.Vulnerabilities {
+		order = append(order, v.ID)
+	}
+	if strings.Join(order, ",") != "CVE-KEV,CVE-EXPLOIT,CVE-EPSS,CVE-SCORE" {
+		t.Errorf("order = %v", order)
+	}
+	if got.Status != StatusCritical {
+		t.Errorf("status = %q, want critical from a pre-set KEV entry", got.Status)
+	}
+}
+
 func TestStatusRankAndParse(t *testing.T) {
-	if StatusCritical.Rank() <= StatusVulnerable.Rank() ||
-		StatusVulnerable.Rank() <= StatusUnknown.Rank() ||
-		StatusUnknown.Rank() <= StatusCurrent.Rank() {
-		t.Error("ranks not strictly ordered")
+	ordered := []Status{StatusCurrent, StatusOutdated, StatusUnknown, StatusUnsupported, StatusVulnerable, StatusCritical}
+	for i := 1; i < len(ordered); i++ {
+		if ordered[i].Rank() <= ordered[i-1].Rank() {
+			t.Errorf("%s should rank above %s", ordered[i], ordered[i-1])
+		}
+	}
+	if s, err := ParseStatus("Unsupported"); err != nil || s != StatusUnsupported {
+		t.Errorf("ParseStatus = %q, %v", s, err)
 	}
 	if s, err := ParseStatus("Critical"); err != nil || s != StatusCritical {
 		t.Errorf("ParseStatus = %q, %v", s, err)

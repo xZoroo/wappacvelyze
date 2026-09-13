@@ -42,6 +42,11 @@ type Vulnerability struct {
 	Advisory      string    `json:"advisory,omitempty"`
 	AffectedRange string    `json:"affected_range,omitempty"`
 	KEV           *KEVEntry `json:"kev,omitempty"`
+	// EPSS is FIRST's probability of exploitation within 30 days, when the database has it.
+	EPSS           float64 `json:"epss,omitempty"`
+	EPSSPercentile float64 `json:"epss_percentile,omitempty"`
+	// Exploits names public exploit sources ("nuclei", "metasploit") that cover the CVE.
+	Exploits []string `json:"exploits,omitempty"`
 }
 
 // NVDClient queries the NVD CVE API, pacing requests to stay within its rate limit.

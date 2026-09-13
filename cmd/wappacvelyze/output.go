@@ -38,6 +38,10 @@ func statusStyle(s cve.Status) (label, code string) {
 	switch s {
 	case cve.StatusCurrent:
 		return "CURRENT", ansiGreen
+	case cve.StatusOutdated:
+		return "OUTDATED", ansiYellow
+	case cve.StatusUnsupported:
+		return "UNSUPPORTED (EOL)", ansiRed
 	case cve.StatusVulnerable:
 		return "VULNERABLE", ansiRed
 	case cve.StatusCritical:
@@ -133,7 +137,15 @@ func printable(s string) string {
 func detail(a cve.Assessment) string {
 	switch a.Status {
 	case cve.StatusCurrent:
-		return "no known CVEs"
+		return "no known CVEs" + lifecycleNote(a.Lifecycle)
+	case cve.StatusOutdated:
+		return fmt.Sprintf("no known CVEs · latest %s (cycle %s)", a.Lifecycle.Latest, a.Lifecycle.Cycle)
+	case cve.StatusUnsupported:
+		note := fmt.Sprintf("cycle %s is end-of-life", a.Lifecycle.Cycle)
+		if a.Lifecycle.EOLFrom != "" {
+			note += " since " + a.Lifecycle.EOLFrom
+		}
+		return note
 	case cve.StatusUnknown:
 		return a.Reason
 	}
@@ -141,6 +153,12 @@ func detail(a cve.Assessment) string {
 	summary := top.ID
 	if top.Severity != "" {
 		summary += fmt.Sprintf(" %s %.1f", top.Severity, top.Score)
+	}
+	if top.EPSS > 0 {
+		summary += fmt.Sprintf(" · EPSS %.0f%%", top.EPSS*100)
+	}
+	if len(top.Exploits) > 0 {
+		summary += " · exploit: " + strings.Join(top.Exploits, ", ")
 	}
 	if more := len(a.Vulnerabilities) - 1; more > 0 {
 		summary += fmt.Sprintf(" (+%d more)", more)
@@ -150,6 +168,13 @@ func detail(a cve.Assessment) string {
 		link = top.KEV.URL
 	}
 	return summary + "  " + link
+}
+
+func lifecycleNote(l *cve.LifecycleInfo) string {
+	if l == nil || l.Latest == "" {
+		return ""
+	}
+	return fmt.Sprintf(" · latest in cycle %s", l.Cycle)
 }
 
 func columnWidths(rows [][]string) []int {
