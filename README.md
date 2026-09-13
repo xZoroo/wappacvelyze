@@ -329,7 +329,7 @@ Firefox (identical code; only the manifest's background declaration differs).
 
 - **Chrome / Edge / Brave:** open `chrome://extensions`, turn on *Developer mode*, click
   *Load unpacked*, and pick `extension/dist`.
-- **Firefox (128+):** open `about:debugging#/runtime/this-firefox`, click *Load Temporary
+- **Firefox (140+):** open `about:debugging#/runtime/this-firefox`, click *Load Temporary
   Add-on…*, and pick `extension/dist-firefox/manifest.json`. Firefox treats host permissions
   as optional in Manifest V3 — grant them from the extension's settings so headers and
   cookies can be observed. Firefox support is untested so far.
