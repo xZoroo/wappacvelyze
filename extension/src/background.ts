@@ -172,6 +172,15 @@ async function publish(tabId: number, result: TabResult): Promise<void> {
   const snapshot: TabResult = { ...result, assessments: [...result.assessments].sort(byUrgency) };
   await session.set(resultKey(tabId), snapshot);
   await updateBadge(tabId, snapshot);
+  if (snapshot.phase === "done") {
+    const summary = snapshot.assessments
+      .map(
+        (a) =>
+          `${a.technology.name}${a.technology.version ? ` ${a.technology.version}` : ""}=${a.status}`,
+      )
+      .join(", ");
+    console.debug(`wappacvelyze: ${snapshot.url} → ${summary}`);
+  }
 }
 
 function sameOrigin(a: string, b: string): boolean {

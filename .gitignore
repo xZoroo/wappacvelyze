@@ -23,3 +23,5 @@
 
 # macOS
 .DS_Store
+/dist-artifacts/
+/extension/web-ext-artifacts/

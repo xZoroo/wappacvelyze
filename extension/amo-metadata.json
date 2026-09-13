@@ -1,0 +1,21 @@
+{
+  "version": {
+    "license": "MIT",
+    "release_notes": {
+      "en-US": "First release: technology detection with versions, verdicts from a daily-built vulnerability database (NVD, CISA KEV, EPSS, endoflife.date, Retire.js), light and dark themes."
+    },
+    "approval_notes": "Source: https://github.com/xZoroo/wappacvelyze (extension/ directory). Build: `cd extension && npm ci && npm run build` — `npm run data` (run by build) generates src/generated/ from the Go module in the same repository (fingerprints from github.com/projectdiscovery/wappalyzergo) and downloads technology logos from github.com/enthec/webappanalyzer; these generated files are not committed. dist-firefox/ is the submitted package. The extension makes no requests other than the daily vulnerability database download from GitHub releases, the CISA KEV feed, and NVD lookups for uncovered products (containing only a product/version CPE). Privacy policy: https://github.com/xZoroo/wappacvelyze/blob/main/PRIVACY.md"
+  },
+  "categories": ["privacy-security"],
+  "summary": {
+    "en-US": "See the technologies behind any site with their versions, colour-coded by known vulnerabilities: current, outdated, end-of-life, vulnerable (CVE) or actively exploited (CISA KEV)."
+  },
+  "description": {
+    "en-US": "WappaCVElyze identifies the web technologies behind the page you are on — server software, CMS, frameworks, JavaScript libraries — and, unlike a plain technology detector, shows the detected version and whether that version is safe.\n\nEach technology gets a verdict:\n• Current — newest release of a maintained cycle, no known CVE\n• Outdated — no known CVE, but a newer release exists\n• End of life — the release cycle no longer receives fixes\n• Vulnerable — a CVE applies to this exact version, with the affected range, CVSS, EPSS exploitation probability and public-exploit flags\n• Critical — the CVE is on CISA's Known Exploited Vulnerabilities catalog\n\nEvery red row links to the NVD record, the CISA entry and the vendor advisory that confirm it.\n\nVerdicts come from a small database built daily from public sources (NVD, CISA KEV, FIRST EPSS, endoflife.date, Retire.js, Nuclei and Metasploit exploit indexes) and downloaded once a day. Page content is analysed locally and never leaves your browser; the site you visit is never sent anywhere. See the privacy policy for every request the extension makes.\n\nOpen source (MIT): https://github.com/xZoroo/wappacvelyze — a command-line scanner with the same verdicts is included."
+  },
+  "homepage": { "en-US": "https://github.com/xZoroo/wappacvelyze" },
+  "support_url": { "en-US": "https://github.com/xZoroo/wappacvelyze/issues" },
+  "is_experimental": false,
+  "requires_payment": false,
+  "tags": ["security", "cve", "vulnerability", "technology detection"]
+}
