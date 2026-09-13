@@ -65,10 +65,6 @@ Go compiles the tool and drops the binary in `$(go env GOPATH)/bin` (usually `~/
 If `wappacvelyze` isn't found afterwards, that directory isn't on your `PATH` yet — see
 [Putting the binary on your PATH](#putting-the-binary-on-your-path).
 
-> While the repository is private, tell Go to fetch it over git instead of the public
-> module proxy: `export GOPRIVATE=github.com/xZoroo` (and make sure `git` can
-> authenticate to GitHub, e.g. via `gh auth login`).
-
 ### Option B — clone and build
 
 ```sh
