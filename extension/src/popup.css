@@ -16,6 +16,8 @@
   --vulnerable-bg: #fdecec;
   --critical: #9f1239;
   --critical-bg: #ffe4ea;
+  --unsupported: #c2410c;
+  --unsupported-bg: #fff1e6;
   --shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
   --focus: #4f46e5;
   color-scheme: light;
@@ -40,6 +42,8 @@
     --vulnerable-bg: rgba(248, 113, 113, 0.16);
     --critical: #fda4af;
     --critical-bg: rgba(253, 164, 175, 0.18);
+    --unsupported: #fb923c;
+    --unsupported-bg: rgba(251, 146, 60, 0.16);
     --shadow: none;
     --focus: #a5b4fc;
     color-scheme: dark;
@@ -64,6 +68,8 @@
   --vulnerable-bg: rgba(248, 113, 113, 0.16);
   --critical: #fda4af;
   --critical-bg: rgba(253, 164, 175, 0.18);
+  --unsupported: #fb923c;
+  --unsupported-bg: rgba(251, 146, 60, 0.16);
   --shadow: none;
   --focus: #a5b4fc;
   color-scheme: dark;
@@ -466,4 +472,26 @@ select:focus-visible {
 .status-text {
   font-size: 11.5px;
   color: var(--current);
+}
+
+.pill-outdated {
+  color: var(--unknown);
+  background: var(--unknown-bg);
+  border-color: transparent;
+}
+
+.pill-unsupported {
+  color: var(--unsupported);
+  background: var(--unsupported-bg);
+  border-color: transparent;
+}
+
+.badge-outdated {
+  color: var(--unknown);
+  background: var(--unknown-bg);
+}
+
+.badge-unsupported {
+  color: var(--unsupported);
+  background: var(--unsupported-bg);
 }

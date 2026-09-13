@@ -339,9 +339,9 @@ Firefox (identical code; only the manifest's background declaration differs).
 
 Then browse anywhere and click the toolbar icon. *Rescan page* re-collects the current
 page; the half-circle / sun / moon button cycles the appearance between following the
-system, light and dark; the gear opens the options page where you can store an NVD API key
-(raises the lookup limit from 5 to 50 per 30 seconds), pick the appearance, and clear the
-CVE cache. Framework globals such as `next.version` often appear seconds after the page is
+system, light and dark; the gear opens the options page where you can pick the appearance,
+store an NVD API key (only used for live lookups of products the database lacks), point the
+extension at a self-hosted copy of the vulnerability database, and clear the CVE cache. Framework globals such as `next.version` often appear seconds after the page is
 idle, so the page script keeps sampling for 25 seconds and the popup updates live.
 
 ### How it works
@@ -356,14 +356,16 @@ Three scripts cooperate, and the verdict pipeline is the CLI's, ported to TypeSc
   Everything from the page is treated as untrusted input and only ever regex-matched or
   rendered as text.
 - **`background.js`** (service worker) records response headers as pages load, reads
-  cookies, runs detection, then performs the NVD → applicability → KEV pipeline with results
-  cached in `chrome.storage.local` for 24 hours. Per-tab results live in
-  `chrome.storage.session` and are cleared when the tab navigates or closes.
+  cookies, runs detection, then assesses each technology against the prebuilt vulnerability
+  database (downloaded once a day, SHA-256 verified, kept in the Cache API) with live NVD
+  as the fallback for products it lacks. Per-tab results live in `chrome.storage.session`
+  and are cleared when the tab navigates or closes.
 
 Permissions: `webRequest` and `<all_urls>` to observe response headers on every site,
-`cookies` for cookie-based fingerprints, `storage`/`unlimitedStorage` for the CVE and KEV
-caches, `tabs` to map results to tabs. Nothing is sent anywhere except queries to NVD and
-CISA; the extension has no server of its own.
+`cookies` for cookie-based fingerprints, `storage`/`unlimitedStorage` for the database and
+caches, `tabs` to map results to tabs. Nothing is sent anywhere except the daily database
+download from GitHub, the CISA KEV feed, and — only for products the database lacks — an
+NVD query; the extension has no server of its own.
 
 ---
 

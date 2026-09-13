@@ -5,6 +5,7 @@ import categoriesJson from "./generated/categories.json";
 import technologiesJson from "./generated/technologies.json";
 import { Cache } from "./lib/cache.ts";
 import { Assessor, rank } from "./lib/classify.ts";
+import { CacheApiBlobStore, DatabaseClient, DEFAULT_DATABASE_URL } from "./lib/db.ts";
 import { analyzeWithBudget, type Evidence } from "./lib/detect.ts";
 import { emptyRecord } from "./lib/evidence.ts";
 import {
@@ -28,6 +29,19 @@ const local = new ChromeStore(chrome.storage.local);
 const session = new ChromeStore(chrome.storage.session);
 const nvdCache = new Cache(local, "nvd:", DAY_MS);
 const kevCache = new Cache(local, "kev:", DAY_MS);
+const blobStore = new CacheApiBlobStore();
+let databaseClient: DatabaseClient | null = null;
+let databaseClientUrl = "";
+
+/** One client per configured URL, so changing the setting starts a fresh download. */
+function databaseClientFor(dbUrl: string): DatabaseClient {
+  const baseUrl = dbUrl.trim() || DEFAULT_DATABASE_URL;
+  if (!databaseClient || databaseClientUrl !== baseUrl) {
+    databaseClient = new DatabaseClient(local, blobStore, { baseUrl });
+    databaseClientUrl = baseUrl;
+  }
+  return databaseClient;
+}
 
 let database: Map<string, Fingerprint> | null = null;
 let wanted: { headers: Set<string>; cookies: Set<string> } | null = null;
@@ -128,7 +142,9 @@ function worst(assessments: Assessment[]): Status {
 
 const BADGE_COLORS: Record<Status, string> = {
   current: "#1A7F37",
+  outdated: "#9A6700",
   unknown: "#6E8099",
+  unsupported: "#C2410C",
   vulnerable: "#CF222E",
   critical: "#8B0000",
 };
@@ -234,8 +250,17 @@ async function handleEvidence(tabId: number, collected: CollectedEvidence): Prom
   }
   await publish(tabId, result);
 
-  const { nvdApiKey } = await loadSettings();
-  const assessor = new Assessor(new NvdClient({ apiKey: nvdApiKey }), await loadKev(), nvdCache);
+  const { nvdApiKey, dbUrl } = await loadSettings();
+  const { database, warning } = await databaseClientFor(dbUrl).load();
+  if (warning) {
+    console.warn("wappacvelyze: vulnerability database", warning);
+  }
+  const assessor = new Assessor(
+    new NvdClient({ apiKey: nvdApiKey }),
+    await loadKev(),
+    nvdCache,
+    database,
+  );
   for (let i = 0; i < result.assessments.length; i++) {
     const pending = result.assessments[i];
     if (!pending || pending.reason !== "checking…") {

@@ -10,7 +10,18 @@ export interface Technology {
   icon?: string;
 }
 
-export type Status = "current" | "unknown" | "vulnerable" | "critical";
+export type Status = "current" | "outdated" | "unknown" | "unsupported" | "vulnerable" | "critical";
+
+/** Where a detected version sits within its product's release cycles. */
+export interface LifecycleInfo {
+  cycle: string;
+  latest?: string;
+  latest_date?: string;
+  eol: boolean;
+  eol_from?: string;
+  maintained: boolean;
+  behind: boolean;
+}
 
 export interface KevEntry {
   cveID: string;
@@ -35,6 +46,9 @@ export interface Vulnerability {
   advisory?: string;
   affected_range?: string;
   kev?: KevEntry;
+  epss?: number;
+  epss_percentile?: number;
+  exploits?: string[];
 }
 
 export interface Assessment {
@@ -42,6 +56,7 @@ export interface Assessment {
   status: Status;
   reason?: string;
   cpe_name?: string;
+  lifecycle?: LifecycleInfo;
   vulnerabilities?: Vulnerability[];
 }
 
@@ -59,4 +74,6 @@ export type Theme = "auto" | "light" | "dark";
 export interface Settings {
   nvdApiKey: string;
   theme: Theme;
+  /** Base URL serving latest.json and the database; empty means the project's release. */
+  dbUrl: string;
 }

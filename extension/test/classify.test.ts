@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { Cache } from "../src/lib/cache.ts";
-import { Assessor, classify, lookupKey, rank } from "../src/lib/classify.ts";
+import { Assessor, classify, comparableVersion, rank } from "../src/lib/classify.ts";
 import { fetchKev, type KevCatalog } from "../src/lib/kev.ts";
 import { NvdClient } from "../src/lib/nvd.ts";
 import { MemoryStore } from "../src/lib/store.ts";
 import type { Technology, Vulnerability } from "../src/lib/types.ts";
-import { jsonResponse } from "./helpers.ts";
+import { jsonResponse, testDatabase } from "./helpers.ts";
 
 const nginx: Technology = {
   name: "Nginx",
@@ -15,7 +15,6 @@ const nginx: Technology = {
 };
 const CPE = "cpe:2.3:a:f5:nginx:1.18.0:*:*:*:*:*:*:*";
 const { version: _version, ...noVersion } = nginx;
-const { cpe: _cpe, ...noCpe } = nginx;
 
 const kev: KevCatalog = {
   catalogVersion: "test",
@@ -36,14 +35,14 @@ const kev: KevCatalog = {
   },
 };
 
-describe("lookupKey", () => {
-  it("builds a versioned CPE or explains why it cannot", () => {
-    expect(lookupKey(nginx)).toEqual({ cpeName: CPE });
-    expect(lookupKey(noVersion)).toEqual({ reason: "version not disclosed" });
-    expect(lookupKey(noCpe)).toMatchObject({ reason: /no CPE/ });
-    expect(lookupKey({ ...nginx, version: "8" })).toMatchObject({ reason: /too coarse/ });
-    expect(lookupKey({ ...nginx, version: "1.x" })).toMatchObject({ reason: /not comparable/ });
-    expect(lookupKey({ ...nginx, cpe: "cpe:/a:x" })).toMatchObject({ reason: /malformed/ });
+describe("comparableVersion", () => {
+  it("parses usable versions or explains why not", () => {
+    expect(comparableVersion(nginx)).toHaveProperty("version");
+    expect(comparableVersion(noVersion)).toEqual({ reason: "version not disclosed" });
+    expect(comparableVersion({ ...nginx, version: "8" })).toMatchObject({ reason: /too coarse/ });
+    expect(comparableVersion({ ...nginx, version: "1.x" })).toMatchObject({
+      reason: /not comparable/,
+    });
   });
 });
 
@@ -67,6 +66,47 @@ describe("classify", () => {
     expect(result.vulnerabilities?.map((v) => v.id)).toEqual(["CVE-2021-B", "CVE-2021-A"]);
   });
 
+  it("uses release cycles when nothing applies", () => {
+    expect(
+      classify(nginx, CPE, [], null, {
+        cycle: "1.18",
+        latest: "1.18.1",
+        eol: false,
+        maintained: true,
+        behind: true,
+      }).status,
+    ).toBe("outdated");
+    expect(
+      classify(nginx, CPE, [], null, { cycle: "1.18", eol: true, maintained: false, behind: false })
+        .status,
+    ).toBe("unsupported");
+    expect(
+      classify(nginx, CPE, vulns, null, {
+        cycle: "1.18",
+        eol: true,
+        maintained: false,
+        behind: false,
+      }).status,
+    ).toBe("vulnerable");
+  });
+
+  it("orders exploited, then exploitable, then by EPSS, then by score", () => {
+    const mixed: Vulnerability[] = [
+      { id: "CVE-SCORE", score: 9.9, url: "u" },
+      { id: "CVE-EPSS", score: 5, epss: 0.9, url: "u" },
+      { id: "CVE-EXPLOIT", score: 4, exploits: ["nuclei"], url: "u" },
+      { id: "CVE-KEV", score: 3, url: "u", kev: kev.entries["CVE-2021-A"]! },
+    ];
+    const result = classify(nginx, CPE, mixed, null);
+    expect(result.status).toBe("critical");
+    expect(result.vulnerabilities?.map((v) => v.id)).toEqual([
+      "CVE-KEV",
+      "CVE-EXPLOIT",
+      "CVE-EPSS",
+      "CVE-SCORE",
+    ]);
+  });
+
   it("promotes KEV hits to critical and lists them first without mutating input", () => {
     const result = classify(nginx, CPE, vulns, kev);
     expect(result.status).toBe("critical");
@@ -78,9 +118,17 @@ describe("classify", () => {
   });
 
   it("ranks statuses strictly", () => {
-    expect(rank("critical")).toBeGreaterThan(rank("vulnerable"));
-    expect(rank("vulnerable")).toBeGreaterThan(rank("unknown"));
-    expect(rank("unknown")).toBeGreaterThan(rank("current"));
+    const ordered = [
+      "current",
+      "outdated",
+      "unknown",
+      "unsupported",
+      "vulnerable",
+      "critical",
+    ] as const;
+    for (let i = 1; i < ordered.length; i++) {
+      expect(rank(ordered[i]!)).toBeGreaterThan(rank(ordered[i - 1]!));
+    }
   });
 });
 
@@ -132,6 +180,34 @@ describe("Assessor", () => {
     });
     expect(failing).not.toHaveBeenCalled();
     expect(await assessor.assess(nginx)).toMatchObject({ status: "unknown", reason: /HTTP 500/ });
+    expect(await new Assessor(null, null, null).assess(nginx)).toMatchObject({
+      status: "unknown",
+      reason: /not in the vulnerability database/,
+    });
+  });
+
+  it("prefers the database and never calls NVD for products it holds", async () => {
+    const fetchFn = vi.fn(async () => new Response("", { status: 500 }));
+    const nvd = new NvdClient({ baseUrl: "https://nvd.test", fetchFn });
+    const assessor = new Assessor(nvd, null, null, testDatabase());
+    const critical = await assessor.assess(nginx);
+    expect(critical.status).toBe("critical");
+    expect(critical.vulnerabilities?.[0]?.id).toBe("CVE-2021-23017");
+    expect(critical.lifecycle).toMatchObject({ cycle: "1.18", eol: true });
+    expect((await assessor.assess({ ...nginx, version: "1.31.2" })).status).toBe("outdated");
+    expect((await assessor.assess({ ...nginx, version: "1.31.5" })).status).toBe("current");
+    const jquery = await assessor.assess({ name: "jQuery", version: "1.5.0", categories: [] });
+    expect(jquery.status).toBe("vulnerable");
+    expect(jquery.vulnerabilities).toHaveLength(3);
+    expect(fetchFn).not.toHaveBeenCalled();
+    const outside = await assessor.assess({
+      name: "Other",
+      version: "1.0",
+      cpe: "cpe:2.3:a:other:thing:*:*:*:*:*:*:*:*",
+      categories: [],
+    });
+    expect(outside.status).toBe("unknown");
+    expect(fetchFn).toHaveBeenCalled();
   });
 });
 

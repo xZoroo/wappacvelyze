@@ -8,10 +8,21 @@ import { applyTheme, loadSettings, nextTheme, saveSettings } from "./settings.ts
 
 const LABELS: Record<Status, string> = {
   current: "Current",
+  outdated: "Outdated",
   unknown: "Unknown",
+  unsupported: "End of life",
   vulnerable: "Vulnerable",
   critical: "Critical · KEV",
 };
+
+const SUMMARY_ORDER: Status[] = [
+  "critical",
+  "vulnerable",
+  "unsupported",
+  "outdated",
+  "unknown",
+  "current",
+];
 
 const THEME_TITLES: Record<Theme, string> = {
   auto: "Theme: follows system (click for light)",
@@ -71,12 +82,27 @@ function detail(assessment: Assessment): HTMLElement | null {
     node.textContent = assessment.reason ?? "";
     return node;
   }
+  const lifecycle = assessment.lifecycle;
+  if (assessment.status === "outdated" && lifecycle) {
+    node.textContent = `${lifecycle.latest ?? "a newer release"} is available in cycle ${lifecycle.cycle}`;
+    return node;
+  }
+  if (assessment.status === "unsupported" && lifecycle) {
+    node.textContent = `cycle ${lifecycle.cycle} reached end of life${lifecycle.eol_from ? ` on ${lifecycle.eol_from}` : ""}`;
+    return node;
+  }
   if (!top) {
     return null;
   }
   const parts: string[] = [];
   if (top.severity) {
     parts.push(`${top.severity} ${top.score ?? ""}`.trim());
+  }
+  if (top.epss !== undefined) {
+    parts.push(`EPSS ${Math.round(top.epss * 100)}%`);
+  }
+  if (top.exploits?.length) {
+    parts.push(`exploit: ${top.exploits.join(", ")}`);
   }
   if (top.affected_range) {
     parts.push(`affects ${top.affected_range}`);
@@ -149,7 +175,7 @@ function renderSummary(assessments: Assessment[]): void {
     return;
   }
   summary.replaceChildren();
-  for (const status of ["critical", "vulnerable", "unknown", "current"] as const) {
+  for (const status of SUMMARY_ORDER) {
     const count = assessments.filter((a) => a.status === status).length;
     if (count > 0) {
       summary.append(element("span", `pill pill-${status}`, `${count} ${LABELS[status]}`));

@@ -24,6 +24,20 @@
           storage.
         </p>
       </div>
+      <div class="field">
+        <label for="db-url">Vulnerability database URL</label>
+        <input
+          id="db-url"
+          type="url"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="https://github.com/xZoroo/wappacvelyze/releases/download/db/"
+        />
+        <p class="help">
+          Leave empty to use the project's daily build. Point it at any static host serving
+          <code>latest.json</code> and <code>wappacvelyze-db.json.gz</code> to self-host.
+        </p>
+      </div>
       <div class="actions">
         <button type="submit" class="button">Save</button>
         <button type="button" id="clear-cache" class="button button-quiet">Clear CVE cache</button>
