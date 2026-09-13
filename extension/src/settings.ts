@@ -1,7 +1,7 @@
 import type { Settings, Theme } from "./lib/types.ts";
 import { SETTINGS_KEY } from "./messages.ts";
 
-const DEFAULTS: Settings = { nvdApiKey: "", theme: "auto" };
+const DEFAULTS: Settings = { nvdApiKey: "", theme: "auto", dbUrl: "" };
 const THEMES: readonly Theme[] = ["auto", "light", "dark"];
 
 export async function loadSettings(): Promise<Settings> {
@@ -10,6 +10,7 @@ export async function loadSettings(): Promise<Settings> {
   return {
     nvdApiKey: typeof stored?.nvdApiKey === "string" ? stored.nvdApiKey : DEFAULTS.nvdApiKey,
     theme: THEMES.includes(stored?.theme as Theme) ? (stored?.theme as Theme) : DEFAULTS.theme,
+    dbUrl: typeof stored?.dbUrl === "string" ? stored.dbUrl : DEFAULTS.dbUrl,
   };
 }
 

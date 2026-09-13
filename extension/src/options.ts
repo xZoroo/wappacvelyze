@@ -3,6 +3,7 @@ import { applyTheme, loadSettings, saveSettings } from "./settings.ts";
 
 const apiKey = document.getElementById("api-key") as HTMLInputElement | null;
 const theme = document.getElementById("theme") as HTMLSelectElement | null;
+const dbUrl = document.getElementById("db-url") as HTMLInputElement | null;
 const status = document.getElementById("status");
 
 function flash(text: string): void {
@@ -23,6 +24,9 @@ async function load(): Promise<void> {
   if (theme) {
     theme.value = settings.theme;
   }
+  if (dbUrl) {
+    dbUrl.value = settings.dbUrl;
+  }
 }
 
 theme?.addEventListener("change", () => {
@@ -34,6 +38,7 @@ document.getElementById("form")?.addEventListener("submit", (event) => {
   void saveSettings({
     nvdApiKey: apiKey?.value.trim() ?? "",
     theme: (theme?.value as Theme | undefined) ?? "auto",
+    dbUrl: dbUrl?.value.trim() ?? "",
   }).then(() => flash("Saved"));
 });
 
