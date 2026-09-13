@@ -12,7 +12,9 @@
     "lint": "oxlint src test",
     "fmt": "oxfmt src test build.mjs scripts",
     "lint:firefox": "npx --yes web-ext@10.6.0 lint --source-dir dist-firefox",
-    "run:firefox": "npx --yes web-ext@10.6.0 run --source-dir dist-firefox"
+    "run:firefox": "npx --yes web-ext@10.6.0 run --source-dir dist-firefox",
+    "package:chrome": "cd dist && zip -qr ../../dist-artifacts/wappacvelyze-chrome-$npm_package_version.zip . -x '.DS_Store'",
+    "package:firefox": "npx --yes web-ext@10.6.0 build --source-dir dist-firefox --artifacts-dir ../dist-artifacts --overwrite-dest"
   },
   "devDependencies": {
     "@types/chrome": "0.2.9",
