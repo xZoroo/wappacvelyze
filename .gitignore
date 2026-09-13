@@ -25,3 +25,7 @@
 .DS_Store
 /dist-artifacts/
 /extension/web-ext-artifacts/
+
+# Credentials must never be committed
+*.env
+!.env.example
