@@ -20,7 +20,10 @@ const (
 	nvdFile   = "nvd.json"
 	kevMaxAge = 24 * time.Hour
 	nvdTTL    = 24 * time.Hour
+	dbMaxAge  = 24 * time.Hour
 )
+
+var cacheFiles = []string{kevFile, nvdFile, "db-manifest.json", "wappacvelyze-db.json.gz"}
 
 // defaultCacheDir is empty when the OS cache directory is unknown; the caches then
 // require an explicit --cache-dir rather than falling back to a world-writable temp dir.
@@ -43,6 +46,7 @@ func runCache(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cache", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cacheDir := fs.String("cache-dir", defaultCacheDir(), "directory holding the NVD and KEV caches")
+	dbURL := fs.String("db-url", cve.DefaultDatabaseURL, "base URL of the prebuilt vulnerability database")
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: wappacvelyze cache [options] <path|clear|refresh>")
 		fs.PrintDefaults()
@@ -64,7 +68,7 @@ func runCache(args []string, stdout, stderr io.Writer) int {
 	case "clear":
 		return cacheClear(*cacheDir, stdout, stderr)
 	case "refresh":
-		return cacheRefresh(*cacheDir, stdout, stderr)
+		return cacheRefresh(*cacheDir, *dbURL, stdout, stderr)
 	default:
 		fs.Usage()
 		return exitError
@@ -72,7 +76,7 @@ func runCache(args []string, stdout, stderr io.Writer) int {
 }
 
 func cacheClear(dir string, stdout, stderr io.Writer) int {
-	for _, name := range []string{kevFile, nvdFile} {
+	for _, name := range cacheFiles {
 		err := os.Remove(filepath.Join(dir, name))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(stderr, "error:", err)
@@ -83,10 +87,18 @@ func cacheClear(dir string, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-func cacheRefresh(dir string, stdout, stderr io.Writer) int {
+func cacheRefresh(dir, dbURL string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 5 * time.Minute}
+	database, err := cve.LoadDatabase(ctx, client, dbURL, dir, 0)
+	if err != nil {
+		fmt.Fprintln(stderr, "error:", err)
+		return exitError
+	}
+	fmt.Fprintf(stdout, "vulnerability database built %s: %d products, %d CVEs, %d libraries\n",
+		database.Built.Format("2006-01-02"), len(database.Products), len(database.Vulnerabilities),
+		len(database.Libraries))
 	kev, err := cve.LoadKEV(ctx, client, cve.DefaultKEVURL, filepath.Join(dir, kevFile), 0)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)

@@ -10,9 +10,11 @@ is readable at a glance:
 
 | Status | Meaning |
 |---|---|
-| 🟢 **CURRENT** | Version detected; no published CVE applies to it |
-| 🟡 **UNKNOWN** | Technology detected but no verdict possible (version not disclosed, no CPE mapping, version too coarse) |
-| 🔴 **VULNERABLE** | At least one CVE in the National Vulnerability Database applies to this exact version |
+| 🟢 **CURRENT** | No CVE applies and, where release data exists, this is the newest release of a maintained cycle |
+| 🟡 **OUTDATED** | No CVE applies, but a newer release exists in the same cycle |
+| 🟡 **UNKNOWN** | Technology detected but no verdict possible (version not disclosed, no CPE or library mapping, version too coarse) |
+| 🟠 **UNSUPPORTED (EOL)** | The release cycle is end-of-life — no CVE matches yet, but fixes will not come |
+| 🔴 **VULNERABLE** | At least one CVE applies to this exact version; rows are ordered exploited → public exploit → EPSS → CVSS |
 | 🚨 **CRITICAL (KEV)** | An applicable CVE is on CISA's Known Exploited Vulnerabilities catalog — it is being exploited in the wild |
 
 ```
@@ -20,10 +22,11 @@ $ wappacvelyze scan https://example-shop.test
 
 https://example-shop.test
   TECHNOLOGY          VERSION  STATUS          DETAILS
-  Apache HTTP Server  2.4.49   CRITICAL (KEV)  CVE-2021-42013 CRITICAL 9.8 (+68 more)  https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2021-42013
-  PHP                 8.1.12   CRITICAL (KEV)  CVE-2024-4577 CRITICAL 9.8 (+33 more)   https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2024-4577
-  WordPress           6.4.1    VULNERABLE      CVE-2024-31210 HIGH 7.6 (+2 more)       https://nvd.nist.gov/vuln/detail/CVE-2024-31210
-  jQuery              3.6.0    CURRENT         no known CVEs
+  Apache HTTP Server  2.4.49   CRITICAL (KEV)  CVE-2021-41773 CRITICAL 9.8 · EPSS 100% · exploit: nuclei, metasploit (+68 more)  https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2021-41773
+  PHP                 8.1.12   CRITICAL (KEV)  CVE-2024-4577 CRITICAL 9.8 · EPSS 100% · exploit: nuclei, metasploit (+33 more)   https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=CVE-2024-4577
+  WordPress           6.4.1    VULNERABLE      CVE-2024-4439 HIGH 7.2 · EPSS 71% · exploit: nuclei (+2 more)  https://nvd.nist.gov/vuln/detail/CVE-2024-4439
+  Nginx               1.31.3   OUTDATED        no known CVEs · latest 1.31.5 (cycle 1.31)
+  jQuery              3.7.1    CURRENT         no known CVEs
   MySQL               —        UNKNOWN         version not disclosed
 ```
 
@@ -193,17 +196,42 @@ Exit status:
 |---|---|---|
 | `--format table\|json` | `table` | Output format |
 | `--targets <file>` | | Read additional URLs from a file |
-| `--fail-on vulnerable\|critical` | | Exit `1` if any technology reaches this status |
+| `--fail-on outdated\|unsupported\|vulnerable\|critical` | | Exit `1` if any technology reaches this status |
 | `--no-cve` | `false` | Detect technologies only; skip all CVE lookups (no network calls to NVD/CISA) |
-| `--nvd-api-key <key>` | `$NVD_API_KEY` | NVD API key; raises the rate limit from 5 to 50 requests per 30 s |
-| `--cache-dir <dir>` | OS cache dir | Where NVD results and the KEV catalog are cached |
+| `--nvd-api-key <key>` | `$NVD_API_KEY` | NVD API key for live lookups of products the database lacks; raises the rate limit from 5 to 50 requests per 30 s |
+| `--db-url <url>` | GitHub release | Base URL of the prebuilt vulnerability database (`latest.json` + `wappacvelyze-db.json.gz`) |
+| `--no-db` | `false` | Skip the prebuilt database and query NVD live for every technology |
+| `--cache-dir <dir>` | OS cache dir | Where the database, NVD results and the KEV catalog are cached |
 | `--timeout <duration>` | `15s` | Per-request HTTP timeout when fetching targets |
 | `--no-color` | `false` | Disable ANSI colors (also honours the `NO_COLOR` environment variable) |
 
+### The vulnerability database
+
+Verdicts come from a **prebuilt database** rather than live API calls. A scheduled GitHub
+Actions job (`.github/workflows/db.yml`, daily) runs `cmd/wappacvelyze-db`, which:
+
+1. streams NVD's 2.0 bulk feeds (no API key needed) and keeps every CVE whose
+   applicability statements name one of the ~310 CPE products the fingerprint database
+   can detect, with their version ranges;
+2. joins CISA KEV (exploited in the wild), FIRST EPSS (probability of exploitation in the
+   next 30 days), and exploit availability from ProjectDiscovery's Nuclei templates and
+   Metasploit's module metadata;
+3. attaches release cycles from endoflife.date (latest release, end-of-life) via each
+   product's CPE identifier;
+4. imports Retire.js's JavaScript-library advisories and links them to fingerprint names
+   (jQuery, Bootstrap, Lodash, Moment.js, Next.js, …);
+5. publishes `latest.json` (schema, build time, SHA-256, counts, sources) and
+   `wappacvelyze-db.json.gz` (about 1.5 MB) as assets of the rolling `db` GitHub release.
+
+Clients fetch `latest.json` once a day, download the blob only when its checksum changed,
+verify it, and match versions locally. Products outside the database fall back to a live
+NVD query. Rebuild it yourself with `go run ./cmd/wappacvelyze-db -out dist/db` and point
+`--db-url` at any static host serving those two files.
+
 ### NVD API key
 
-Without a key, NVD allows **5 requests per 30 seconds**; the tool paces itself and retries,
-so large scans are slow but work. A free key raises that to 50 — request one at
+Only live fallback lookups touch NVD. Without a key, NVD allows **5 requests per 30
+seconds**; the tool paces itself and retries. A free key raises that to 50 — request one at
 <https://nvd.nist.gov/developers/request-an-api-key> and export it:
 
 ```sh
@@ -212,13 +240,12 @@ export NVD_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 ### Caching
 
-Lookups are cached for 24 hours so repeated scans of the same technology version never hit
-the network twice:
+The database, the KEV catalog and live NVD results are cached for 24 hours:
 
 ```sh
 wappacvelyze cache path       # print the cache directory
-wappacvelyze cache refresh    # re-download the CISA KEV catalog now
-wappacvelyze cache clear      # delete cached NVD results and the KEV catalog
+wappacvelyze cache refresh    # re-download the database and the CISA KEV catalog now
+wappacvelyze cache clear      # delete everything cached
 ```
 
 The default location is `~/Library/Caches/wappacvelyze` on macOS,
@@ -229,8 +256,9 @@ The default location is `~/Library/Caches/wappacvelyze` on macOS,
 ## How it works
 
 ```
- URL ──▶ fetch ──▶ fingerprint ──▶ version + CPE ──▶ NVD ──▶ applicability ──▶ KEV ──▶ verdict
-                  (wappalyzergo)                    (API 2.0)   re-check       (CISA)
+ URL ──▶ fetch ──▶ fingerprint ──▶ version + CPE ──▶ database ──▶ applicability ──▶ verdict
+                  (wappalyzergo)                    (or live NVD)   re-check      + release cycle
+                                                                                 + KEV / EPSS / exploits
 ```
 
 1. **Fetch.** The target is requested once over HTTP(S), following redirects. Only the
@@ -248,8 +276,8 @@ The default location is `~/Library/Caches/wappacvelyze` on macOS,
    single-number version such as `PHP 8` → `UNKNOWN` ("too coarse"), because matching it
    against every 8.x advisory would produce false alarms.
 
-4. **Query NVD.** The versioned CPE is sent to the NVD CVE API 2.0, which returns every
-   CVE whose applicability statements cover that version.
+4. **Look up the product.** The prebuilt database holds every NVD applicability statement
+   for the product; only products it lacks are sent to the NVD CVE API 2.0 live.
 
 5. **Re-check applicability locally.** NVD holds many old records whose affected-product
    criteria were never scoped (`wordpress:wordpress:*` with no version bounds), and they
@@ -257,12 +285,17 @@ The default location is `~/Library/Caches/wappacvelyze` on macOS,
    re-evaluated against the detected version: exact-version matches and bounded ranges
    count, unbounded wildcards do not. The matching range is kept as `affected_range`.
 
-6. **Cross-reference CISA KEV.** Every applicable CVE ID is looked up in CISA's Known
-   Exploited Vulnerabilities catalog (cached locally, refreshed daily). A hit promotes the
-   verdict to `CRITICAL`.
+6. **Cross-reference CISA KEV.** Every applicable CVE ID is checked against CISA's Known
+   Exploited Vulnerabilities catalog. A hit promotes the verdict to `CRITICAL`.
 
-7. **Rank.** Within a technology, vulnerabilities are ordered KEV first, then by CVSS score.
-   Within a scan, technologies are ordered by urgency so the worst news is at the top.
+7. **Place the version in its release cycle.** With no applicable CVE, endoflife.date data
+   decides between `CURRENT` (newest release of a maintained cycle), `OUTDATED` (a newer
+   release exists) and `UNSUPPORTED` (the cycle is end-of-life).
+
+8. **Rank.** Within a technology, vulnerabilities are ordered exploited-in-the-wild first,
+   then those with a public Nuclei or Metasploit exploit, then by EPSS probability, then by
+   CVSS score. Within a scan, technologies are ordered by urgency so the worst news is at
+   the top.
 
 ---
 
@@ -338,9 +371,11 @@ CISA; the extension has no server of its own.
 
 ```
 cmd/wappacvelyze/        CLI: argument parsing, table/JSON rendering, cache subcommands
+cmd/wappacvelyze-db/     Builds the prebuilt vulnerability database from NVD, KEV, EPSS, …
 cmd/gen-extension-data/  Exports the fingerprint database for the extension
+db/                      Database schema shared by the builder, the CLI and the extension
 detect/                  Technology detection — thin wrapper over wappalyzergo
-cve/                     NVD API client, CISA KEV loader, applicability check, cache, classifier
+cve/                     Database loader, NVD API client, KEV loader, applicability check, classifier
 extension/               Browser extension (TypeScript, Manifest V3)
   src/lib/               Detection engine and CVE pipeline, mirroring detect/ and cve/
   src/{background,content,page,popup,options}.ts
@@ -402,8 +437,8 @@ wappacvelyze scan http://127.0.0.1:8765
 - **NVD data quality.** Applicability statements are curated by hand and are occasionally
   wrong or missing; treat a red result as "go read the advisory", not as proof of
   exploitability.
-- **Rate limits.** Without an NVD API key, scanning many distinct technology versions is
-  slow by design (5 requests / 30 s).
+- **Rate limits.** Only products missing from the prebuilt database are looked up live;
+  without an NVD API key those lookups are paced at 5 requests / 30 s.
 - **Regex cost in the extension.** Fingerprints are regular expressions run against page
   content inside the browser, where the regex engine backtracks. Inputs are capped, bare
   quantifiers are bounded the same way wappalyzergo does, and detection stops after a
@@ -421,8 +456,9 @@ wappacvelyze scan http://127.0.0.1:8765
   fingerprints actually read, bound to the page they came from, and kept only in
   session storage until the tab navigates or closes.
 - The CLI strips control characters from anything a server can influence before printing
-  to the terminal, verifies TLS, caps response bodies at 5 MB, and writes its caches with
-  exclusive temporary files in the user's cache directory only.
+  to the terminal, verifies TLS, caps response bodies at 5 MB, verifies the database against
+  the SHA-256 in its manifest before use, and writes its caches with exclusive temporary
+  files in the user's cache directory only.
 - Store the NVD API key in the `NVD_API_KEY` environment variable rather than on the command
   line, where other local users could read it from the process list.
 
@@ -439,5 +475,12 @@ wappacvelyze scan http://127.0.0.1:8765
   the Go fingerprint engine this tool builds on.
 - [webappanalyzer](https://github.com/enthec/webappanalyzer) by Enthec — the community
   continuation of the Wappalyzer fingerprint database.
-- [NVD](https://nvd.nist.gov/) (NIST) and the [CISA Known Exploited Vulnerabilities
-  catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) for vulnerability data.
+- [NVD](https://nvd.nist.gov/) (NIST) for CVE records and applicability data. This product
+  uses the NVD API but is not endorsed or certified by the NVD.
+- The [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) (CC0).
+- [EPSS](https://www.first.org/epss/) scores by FIRST.
+- [endoflife.date](https://endoflife.date/) (MIT) for release cycles and end-of-life dates.
+- [Retire.js](https://github.com/RetireJS/retire.js) (Apache-2.0) for JavaScript-library advisories.
+- [ProjectDiscovery nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) (MIT)
+  and the [Metasploit Framework](https://github.com/rapid7/metasploit-framework) (BSD-3-Clause)
+  for exploit availability.
