@@ -44,6 +44,7 @@ Firefox) that shows the same verdicts in a popup — see [Browser extension](#br
 - [Project layout](#project-layout)
 - [Development](#development)
 - [Limitations](#limitations)
+- [Privacy](#privacy)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
@@ -447,6 +448,13 @@ wappacvelyze scan http://127.0.0.1:8765
   3-second budget, but a deliberately pathological page can still make a scan of itself
   slow or incomplete (the popup then shows partial results). The CLI's Go regex engine is
   linear-time and unaffected.
+
+## Privacy
+
+The extension processes page content locally, keeps results only per tab, and contacts
+only public vulnerability-data services — never with the site you were visiting. See
+[PRIVACY.md](PRIVACY.md) for the full policy, including every network request, what is
+stored where, and why each permission is needed.
 
 ## Security notes
 
