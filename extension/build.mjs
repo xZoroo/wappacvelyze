@@ -22,6 +22,9 @@ async function bundle(outdir, manifest) {
     await cp(`src/${file}`, `${outdir}/${file}`);
   }
   await cp("src/generated/icons", `${outdir}/icons`, { recursive: true });
+  for (const size of [16, 32, 48, 128]) {
+    await cp(`icons/icon-${size}.png`, `${outdir}/icons/icon-${size}.png`);
+  }
   await writeFile(`${outdir}/manifest.json`, JSON.stringify(manifest, null, 2) + "\n");
 }
 
