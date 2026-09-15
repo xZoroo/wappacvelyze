@@ -32,6 +32,17 @@ const kevCache = new Cache(local, "kev:", DAY_MS);
 const blobStore = new CacheApiBlobStore();
 let databaseClient: DatabaseClient | null = null;
 let databaseClientUrl = "";
+let nvdClient: NvdClient | null = null;
+let nvdClientKey = "";
+
+/** One client per API key, so its rate limiter's budget is shared across navigations and tabs. */
+function nvdClientFor(apiKey: string): NvdClient {
+  if (!nvdClient || nvdClientKey !== apiKey) {
+    nvdClient = new NvdClient({ apiKey });
+    nvdClientKey = apiKey;
+  }
+  return nvdClient;
+}
 
 /** One client per configured URL, so changing the setting starts a fresh download. */
 function databaseClientFor(dbUrl: string): DatabaseClient {
@@ -264,28 +275,52 @@ async function handleEvidence(tabId: number, collected: CollectedEvidence): Prom
   if (warning) {
     console.warn("wappacvelyze: vulnerability database", warning);
   }
-  const assessor = new Assessor(
-    new NvdClient({ apiKey: nvdApiKey }),
-    await loadKev(),
-    nvdCache,
-    database,
+  const assessor = new Assessor(nvdClientFor(nvdApiKey), await loadKev(), nvdCache, database);
+  // Local database lookups are synchronous-fast and any live NVD fallback is paced by the
+  // shared client's own rate limiter, so assessing technologies concurrently is both safe
+  // and far faster than awaiting them one at a time.
+  await Promise.all(
+    result.assessments.map(async (pending, i) => {
+      if (pending.reason !== "checking…") {
+        return;
+      }
+      const assessment = await assessor.assess(pending.technology);
+      if (superseded()) {
+        return;
+      }
+      result.assessments[i] = assessment;
+      result.updatedAt = Date.now();
+      await publish(tabId, result);
+    }),
   );
-  for (let i = 0; i < result.assessments.length; i++) {
-    const pending = result.assessments[i];
-    if (!pending || pending.reason !== "checking…") {
-      continue;
-    }
-    const assessment = await assessor.assess(pending.technology);
-    if (superseded()) {
-      return;
-    }
-    result.assessments[i] = assessment;
-    result.updatedAt = Date.now();
-    await publish(tabId, result);
-  }
   result.phase = "done";
   if (!superseded()) {
     await publish(tabId, result);
+  }
+}
+
+/**
+ * Content scripts only auto-inject into new page loads, so a tab left open from before the
+ * extension was installed or updated has none. Try messaging it first (the common, fast
+ * case); only if nothing is listening do we inject fresh copies, isolated world first so it
+ * is already listening when the main-world script's initial report arrives.
+ */
+async function ensureCollecting(tabId: number): Promise<void> {
+  const request: RuntimeMessage = { type: "collect" };
+  try {
+    await chrome.tabs.sendMessage(tabId, request);
+  } catch {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["page.js"],
+        world: "MAIN",
+      });
+    } catch {
+      // Restricted pages (chrome://, the Web Store, PDF viewer, …) refuse injection; nothing
+      // to detect there anyway.
+    }
   }
 }
 
@@ -293,8 +328,7 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender) => {
   if (message.type === "evidence" && sender.tab?.id !== undefined) {
     void handleEvidence(sender.tab.id, message.evidence);
   } else if (message.type === "rescan") {
-    const request: RuntimeMessage = { type: "collect" };
-    void chrome.tabs.sendMessage(message.tabId, request).catch(() => undefined);
+    void ensureCollecting(message.tabId);
   }
   return false;
 });
