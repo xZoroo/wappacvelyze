@@ -240,9 +240,11 @@ async function activeTabId(): Promise<number | undefined> {
   return tab?.id;
 }
 
-async function load(tabId: number): Promise<void> {
+async function load(tabId: number): Promise<boolean> {
   const items = await chrome.storage.session.get(resultKey(tabId));
-  render(items[resultKey(tabId)] as TabResult | undefined);
+  const result = items[resultKey(tabId)] as TabResult | undefined;
+  render(result);
+  return result !== undefined;
 }
 
 async function main(): Promise<void> {
@@ -262,16 +264,21 @@ async function main(): Promise<void> {
     render(undefined);
     return;
   }
-  await load(tabId);
+  const hasResult = await load(tabId);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "session" && resultKey(tabId) in changes) {
       void load(tabId);
     }
   });
-  document.getElementById("rescan")?.addEventListener("click", () => {
-    const message: RuntimeMessage = { type: "rescan", tabId };
-    void chrome.runtime.sendMessage(message);
-  });
+  const rescan = () =>
+    void chrome.runtime.sendMessage({ type: "rescan", tabId } satisfies RuntimeMessage);
+  document.getElementById("rescan")?.addEventListener("click", rescan);
+  // The content script only auto-runs on new page loads, so a tab left open from before
+  // install or an update has no data yet; ask the background worker to collect it now
+  // instead of leaving the user to find and press Rescan themselves.
+  if (!hasResult) {
+    rescan();
+  }
 }
 
 void main();
