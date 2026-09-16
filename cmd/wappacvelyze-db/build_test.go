@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xZoroo/wappacvelyze/db"
 )
@@ -179,5 +180,112 @@ func TestProductKey(t *testing.T) {
 	}
 	if key, _ := productKey("nonsense"); key != "" {
 		t.Errorf("malformed CPE gave key %q", key)
+	}
+}
+
+// TestIngestRecordDedupesMatches proves a record processed twice (e.g. a retried year
+// resuming after a partial read, or a feed that lists the same statement twice) never
+// produces duplicate Match entries.
+func TestIngestRecordDedupesMatches(t *testing.T) {
+	database := newDatabase(map[string]string{"Nginx": "f5:nginx"})
+	record := nvdRecord{ID: "CVE-2021-23017"}
+	record.Configurations = []struct {
+		Nodes []struct {
+			CPEMatch []struct {
+				Vulnerable            bool   `json:"vulnerable"`
+				Criteria              string `json:"criteria"`
+				VersionStartIncluding string `json:"versionStartIncluding"`
+				VersionStartExcluding string `json:"versionStartExcluding"`
+				VersionEndIncluding   string `json:"versionEndIncluding"`
+				VersionEndExcluding   string `json:"versionEndExcluding"`
+			} `json:"cpeMatch"`
+		} `json:"nodes"`
+	}{{Nodes: []struct {
+		CPEMatch []struct {
+			Vulnerable            bool   `json:"vulnerable"`
+			Criteria              string `json:"criteria"`
+			VersionStartIncluding string `json:"versionStartIncluding"`
+			VersionStartExcluding string `json:"versionStartExcluding"`
+			VersionEndIncluding   string `json:"versionEndIncluding"`
+			VersionEndExcluding   string `json:"versionEndExcluding"`
+		} `json:"cpeMatch"`
+	}{{CPEMatch: []struct {
+		Vulnerable            bool   `json:"vulnerable"`
+		Criteria              string `json:"criteria"`
+		VersionStartIncluding string `json:"versionStartIncluding"`
+		VersionStartExcluding string `json:"versionStartExcluding"`
+		VersionEndIncluding   string `json:"versionEndIncluding"`
+		VersionEndExcluding   string `json:"versionEndExcluding"`
+	}{{Vulnerable: true, Criteria: "cpe:2.3:a:f5:nginx:*:*:*:*:*:*:*:*", VersionEndExcluding: "1.20.1"}}}}}}
+
+	ingestRecord(record, database)
+	ingestRecord(record, database) // simulates a retry re-processing the same record
+
+	matches := database.Products["f5:nginx"].Matches["CVE-2021-23017"]
+	if len(matches) != 1 {
+		t.Fatalf("matches = %+v, want exactly one (deduped)", matches)
+	}
+}
+
+// TestIngestNVDFeedWithRetryRecoversAndDoesNotDoubleCount simulates a year's feed that
+// fails partway through streaming (as the 2026 feed did in CI) and confirms a retry
+// completes the ingest without duplicating records already applied by the failed attempt.
+func TestIngestNVDFeedWithRetryRecoversAndDoesNotDoubleCount(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		data := gz(t, nvdFeed)
+		if attempts == 1 {
+			// Write valid gzip framing but far short of the declared content, simulating a
+			// connection that stalls mid-body the way the CI timeout did.
+			w.Header().Set("Content-Length", "999999")
+			_, _ = w.Write(data[:len(data)/2])
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	database := newDatabase(map[string]string{"Nginx": "f5:nginx", "PHP": "php:php"})
+	n, err := ingestNVDFeedWithRetryBackoff(
+		context.Background(), fetcher{client: srv.Client()}, srv.URL, database, 3, time.Millisecond,
+	)
+	if err != nil {
+		t.Fatalf("ingestNVDFeedWithRetry: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2 (one failure, one success)", attempts)
+	}
+	if n != 2 {
+		t.Fatalf("kept = %d, want 2", n)
+	}
+	if matches := database.Products["f5:nginx"].Matches["CVE-2021-23017"]; len(matches) != 1 {
+		t.Fatalf("nginx matches = %+v, want exactly one despite the retry", matches)
+	}
+}
+
+// TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure confirms it surfaces the error
+// (rather than looping forever or silently succeeding) once retries are exhausted.
+func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
+	attempts := 0
+	// A 200 with a truncated body models the observed bug (the connection succeeds, the
+	// streaming decode fails partway through) without also triggering fetcher.open's own
+	// connect-time retries, which a non-2xx status here would nest inside this one.
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		w.Header().Set("Content-Length", "999999")
+		_, _ = w.Write(gz(t, nvdFeed)[:4])
+	}))
+	defer srv2.Close()
+
+	database := newDatabase(nil)
+	_, err := ingestNVDFeedWithRetryBackoff(
+		context.Background(), fetcher{client: srv2.Client()}, srv2.URL, database, 3, time.Millisecond,
+	)
+	if err == nil {
+		t.Fatal("expected an error after exhausting retries")
+	}
+	if attempts != 3 {
+		t.Errorf("attempts = %d, want 3", attempts)
 	}
 }
