@@ -46,7 +46,10 @@ func run(ctx context.Context, sources Sources, out string) error {
 		return err
 	}
 	database := newDatabase(technologies)
-	f := fetcher{client: &http.Client{Timeout: 10 * time.Minute}}
+	// The current year's feed grows all year and is NVD's slowest to fully stream; a
+	// generous per-request timeout paired with retries (below) absorbs one bad day
+	// without failing the whole nightly build.
+	f := fetcher{client: &http.Client{Timeout: 20 * time.Minute}}
 	if err := build(ctx, f, sources, database, technologyNames(technologies)); err != nil {
 		return err
 	}
@@ -97,10 +100,42 @@ func newDatabase(technologies map[string]string) *db.Database {
 	return database
 }
 
+const nvdRetryAttempts = 3
+const nvdRetryBackoff = 10 * time.Second
+
+// ingestNVDFeedWithRetry retries a slow or interrupted year's feed. ingestNVDFeed already
+// dedupes matches, so a retry that resumes after a partial read cannot double-count records.
+func ingestNVDFeedWithRetry(ctx context.Context, f fetcher, url string, database *db.Database) (int, error) {
+	return ingestNVDFeedWithRetryBackoff(ctx, f, url, database, nvdRetryAttempts, nvdRetryBackoff)
+}
+
+func ingestNVDFeedWithRetryBackoff(
+	ctx context.Context, f fetcher, url string, database *db.Database, attempts int, backoff time.Duration,
+) (int, error) {
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		n, err := ingestNVDFeed(ctx, f, url, database)
+		if err == nil {
+			return n, nil
+		}
+		lastErr = err
+		if attempt < attempts {
+			fmt.Fprintf(os.Stderr, "nvd %s: attempt %d failed (%v), retrying\n", url, attempt, err)
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			case <-time.After(time.Duration(attempt) * backoff):
+			}
+		}
+	}
+	return 0, lastErr
+}
+
 func build(ctx context.Context, f fetcher, sources Sources, database *db.Database, technologies []string) error {
 	kept := 0
 	for year := sources.FirstYear; year <= sources.LastYear; year++ {
-		n, err := ingestNVDFeed(ctx, f, fmt.Sprintf(sources.NVDFeed, year), database)
+		url := fmt.Sprintf(sources.NVDFeed, year)
+		n, err := ingestNVDFeedWithRetry(ctx, f, url, database)
 		if err != nil {
 			return err
 		}

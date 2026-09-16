@@ -112,13 +112,18 @@ func ingestRecord(record nvdRecord, database *db.Database) bool {
 				if !m.Vulnerable || !ok {
 					continue
 				}
-				product.Matches[record.ID] = append(product.Matches[record.ID], db.Match{
+				match := db.Match{
 					Version:               version,
 					VersionStartIncluding: m.VersionStartIncluding,
 					VersionStartExcluding: m.VersionStartExcluding,
 					VersionEndIncluding:   m.VersionEndIncluding,
 					VersionEndExcluding:   m.VersionEndExcluding,
-				})
+				}
+				// A feed can list the same applicability statement twice, and a retried
+				// (possibly partially ingested) year must not double it either.
+				if !slices.Contains(product.Matches[record.ID], match) {
+					product.Matches[record.ID] = append(product.Matches[record.ID], match)
+				}
 				matched = true
 			}
 		}
