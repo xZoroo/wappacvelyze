@@ -17,11 +17,11 @@
     "package:firefox": "npx --yes web-ext@10.6.0 build --source-dir dist-firefox --artifacts-dir ../dist-artifacts --overwrite-dest"
   },
   "devDependencies": {
-    "@types/chrome": "0.2.9",
+    "@types/chrome": "0.3.0",
     "esbuild": "0.28.2",
-    "oxfmt": "0.67.0",
-    "oxlint": "1.82.0",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
     "typescript": "7.0.2",
-    "vitest": "5.0.0"
+    "vitest": "5.0.1"
   }
 }
