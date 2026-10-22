@@ -1,0 +1,70 @@
+name: Publish to Firefox Add-ons
+
+on:
+  push:
+    branches: [main]
+    paths: ["extension/manifest.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Check whether the extension version changed
+        id: version
+        run: |
+          new=$(jq -r .version extension/manifest.json)
+          old=$(git show HEAD^:extension/manifest.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$new" != "$old" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "manifest version: $old -> $new"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.version.outputs.changed == 'true'
+        with:
+          go-version: stable
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.version.outputs.changed == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Build the Firefox package
+        if: steps.version.outputs.changed == 'true'
+        working-directory: extension
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Archive the source for reviewers
+        if: steps.version.outputs.changed == 'true'
+        run: git archive --format=zip -o source.zip HEAD
+
+      - name: Submit to addons.mozilla.org
+        if: steps.version.outputs.changed == 'true'
+        working-directory: extension
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          npx --yes web-ext@10.6.0 sign \
+            --source-dir dist-firefox \
+            --channel listed \
+            --amo-metadata amo-metadata.json \
+            --upload-source-code ../source.zip \
+            --artifacts-dir ../dist-artifacts \
+            --no-input
