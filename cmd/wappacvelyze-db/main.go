@@ -113,6 +113,10 @@ func ingestNVDFeedWithRetryBackoff(
 ) (int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
+		// Force a new connection for every attempt (first try of this year, retry of this
+		// year, or the first try of the next year): NVD's edge resets streams on a
+		// connection the longer it has carried this builder's run of sequential requests.
+		f.client.CloseIdleConnections()
 		n, err := ingestNVDFeed(ctx, f, url, database)
 		if err == nil {
 			return n, nil

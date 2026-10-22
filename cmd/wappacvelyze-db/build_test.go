@@ -290,18 +290,71 @@ func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
 	}
 }
 
-// TestNewHTTPClientAvoidsConnectionReuse locks in the fix for NVD's edge intermittently
-// resetting HTTP/2 streams on a long-lived connection partway through the run: every
-// request must get a fresh HTTP/1.1 connection rather than reusing a prior one.
-func TestNewHTTPClientAvoidsConnectionReuse(t *testing.T) {
+// TestNewHTTPClientOwnsItsTransport locks in using a dedicated Transport (not the shared
+// http.DefaultTransport), which is what makes it safe for the retry loop to call
+// CloseIdleConnections without affecting anything else in the process. It must leave
+// HTTP/2 support untouched: NVD's edge speaks HTTP/2 unconditionally, and a client with no
+// HTTP/2 support misreads its frames as a malformed HTTP/1.1 response.
+func TestNewHTTPClientOwnsItsTransport(t *testing.T) {
 	transport, ok := newHTTPClient(time.Minute).Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("Transport is %T, want *http.Transport", newHTTPClient(time.Minute).Transport)
 	}
-	if !transport.DisableKeepAlives {
-		t.Error("DisableKeepAlives = false, want true (each request needs its own connection)")
+	if transport == http.DefaultTransport {
+		t.Error("Transport is the shared http.DefaultTransport; CloseIdleConnections would affect unrelated code")
 	}
-	if transport.TLSNextProto == nil || len(transport.TLSNextProto) != 0 {
-		t.Errorf("TLSNextProto = %v, want a non-nil empty map (disables HTTP/2)", transport.TLSNextProto)
+	if transport.TLSNextProto != nil {
+		t.Errorf("TLSNextProto = %v, want nil (HTTP/2 must stay enabled)", transport.TLSNextProto)
+	}
+}
+
+// TestIngestNVDFeedWithRetryBackoffClosesIdleConnectionsBeforeEveryAttempt proves the fix
+// for NVD's edge resetting streams on a connection that has carried many sequential
+// requests: every attempt (including retries of the same year) must force a fresh
+// connection, not just the first one.
+func TestIngestNVDFeedWithRetryBackoffClosesIdleConnectionsBeforeEveryAttempt(t *testing.T) {
+	var closedBeforeAttempt []bool
+	closing := false
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		closedBeforeAttempt = append(closedBeforeAttempt, closing)
+		closing = false
+		if attempts < 3 {
+			w.Header().Set("Content-Length", "999999")
+			_, _ = w.Write(gz(t, nvdFeed)[:4])
+			return
+		}
+		_, _ = w.Write(gz(t, nvdFeed))
+	}))
+	defer srv.Close()
+
+	client := srv.Client()
+	tracking := &closeTrackingRoundTripper{RoundTripper: client.Transport, onClose: func() { closing = true }}
+	client.Transport = tracking
+
+	database := newDatabase(map[string]string{"Nginx": "f5:nginx", "PHP": "php:php"})
+	n, err := ingestNVDFeedWithRetryBackoff(context.Background(), fetcher{client: client}, srv.URL, database, 3, time.Millisecond)
+	if err != nil {
+		t.Fatalf("ingestNVDFeedWithRetryBackoff: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("kept = %d, want 2", n)
+	}
+	if len(closedBeforeAttempt) != 3 || !closedBeforeAttempt[1] || !closedBeforeAttempt[2] {
+		t.Errorf("CloseIdleConnections before each attempt = %v, want [_, true, true]", closedBeforeAttempt)
+	}
+}
+
+// closeTrackingRoundTripper reports whether CloseIdleConnections was called on it.
+type closeTrackingRoundTripper struct {
+	http.RoundTripper
+	onClose func()
+}
+
+func (c *closeTrackingRoundTripper) CloseIdleConnections() {
+	c.onClose()
+	if closer, ok := c.RoundTripper.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
 	}
 }

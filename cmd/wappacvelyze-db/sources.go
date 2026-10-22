@@ -3,7 +3,6 @@ package main
 import (
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,15 +38,18 @@ func DefaultSources() Sources {
 
 const userAgent = "wappacvelyze-db/0.1 (+https://github.com/xZoroo/wappacvelyze)"
 
-// newHTTPClient builds a client with no connection reuse and HTTP/1.1 only. NVD's edge
-// (Akamai) has been observed resetting individual HTTP/2 streams on a long-lived connection
-// partway through this builder's ~25 sequential feed requests, with failures growing more
-// frequent as the same connection carries more of them; a fresh HTTP/1.1 connection per
-// request removes any dependency on a prior request's connection staying healthy.
+// newHTTPClient builds a dedicated client (its own connection pool, isolated from
+// http.DefaultTransport) so callers can force fresh connections with CloseIdleConnections
+// without affecting anything else in the process.
+//
+// NVD's edge speaks HTTP/2 unconditionally on this host (disabling it client-side just
+// breaks every request: the server still sends HTTP/2 frames, which a client with no HTTP/2
+// support misreads as a malformed HTTP/1.1 response). The real, previously observed problem
+// is Akamai resetting individual streams on a connection the longer it carries this
+// builder's ~25 sequential feed requests; see ingestNVDFeedWithRetryBackoff, which forces a
+// new connection before every attempt rather than fighting the server's protocol choice.
 func newHTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DisableKeepAlives = true
-	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
