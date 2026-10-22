@@ -341,6 +341,23 @@ store an NVD API key (only used for live lookups of products the database lacks)
 extension at a self-hosted copy of the vulnerability database, and clear the CVE cache. Framework globals such as `next.version` often appear seconds after the page is
 idle, so the page script keeps sampling for 25 seconds and the popup updates live.
 
+### Releases
+
+Merging a change to the shipped extension (`extension/src`, `extension/icons`,
+`extension/manifest.json`, `extension/build.mjs`, `cmd/gen-extension-data`) into `main`
+publishes a new version to Firefox Add-ons automatically
+(`.github/workflows/amo-publish.yml`). The version comes from the latest `extension-v*`
+git tag, bumped by the commit messages since it:
+
+- a commit starting with `feat:` (or containing a `BREAKING CHANGE` footer) bumps the
+  minor version — `0.1.4` → `0.2.0`
+- anything else (`fix:`, `chore:`, or no prefix) bumps the patch version — `0.1.4` → `0.1.5`
+
+The workflow stamps that version into the built manifest, submits it with the commit
+subjects as release notes, and tags the release once Mozilla accepts the upload. The
+`version` field committed in `extension/manifest.json` is a placeholder and is never bumped
+by hand.
+
 ### How it works
 
 Three scripts cooperate, and the verdict pipeline is the CLI's, ported to TypeScript
