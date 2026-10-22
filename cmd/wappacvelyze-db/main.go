@@ -45,10 +45,9 @@ func run(ctx context.Context, sources Sources, out string) error {
 		return err
 	}
 	database := newDatabase(technologies)
-	// The current year's feed grows all year and is NVD's slowest to fully stream; a
-	// generous per-request timeout paired with retries (below) absorbs one bad day
-	// without failing the whole nightly build.
-	f := fetcher{client: newHTTPClient(20 * time.Minute)}
+	// NVD serves the feeds slowly (tens of KB/s at times) and the current year's grows to
+	// tens of megabytes, so one request can legitimately take many minutes.
+	f := fetcher{client: newHTTPClient(45 * time.Minute)}
 	if err := build(ctx, f, sources, database, technologyNames(technologies)); err != nil {
 		return err
 	}
@@ -113,10 +112,6 @@ func ingestNVDFeedWithRetryBackoff(
 ) (int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		// Force a new connection for every attempt (first try of this year, retry of this
-		// year, or the first try of the next year): NVD's edge resets streams on a
-		// connection the longer it has carried this builder's run of sequential requests.
-		f.client.CloseIdleConnections()
 		n, err := ingestNVDFeed(ctx, f, url, database)
 		if err == nil {
 			return n, nil

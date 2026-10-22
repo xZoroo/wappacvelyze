@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,18 +39,20 @@ func DefaultSources() Sources {
 
 const userAgent = "wappacvelyze-db/0.1 (+https://github.com/xZoroo/wappacvelyze)"
 
-// newHTTPClient builds a dedicated client (its own connection pool, isolated from
-// http.DefaultTransport) so callers can force fresh connections with CloseIdleConnections
-// without affecting anything else in the process.
+// newHTTPClient speaks HTTP/1.1 only. NVD's feeds are served through Cloudflare, which
+// resets HTTP/2 streams after roughly 90 seconds; the larger yearly feeds download slowly
+// enough to hit that on every attempt (stream ID 1 of a brand-new connection included),
+// while the same download over HTTP/1.1 completes.
 //
-// NVD's edge speaks HTTP/2 unconditionally on this host (disabling it client-side just
-// breaks every request: the server still sends HTTP/2 frames, which a client with no HTTP/2
-// support misreads as a malformed HTTP/1.1 response). The real, previously observed problem
-// is Akamai resetting individual streams on a connection the longer it carries this
-// builder's ~25 sequential feed requests; see ingestNVDFeedWithRetryBackoff, which forces a
-// new connection before every attempt rather than fighting the server's protocol choice.
+// The ALPN list must be replaced too: a clone of http.DefaultTransport inherits
+// NextProtos ["h2", "http/1.1"], so the server would still negotiate HTTP/2 and send
+// frames that an HTTP/1-only transport reads as a malformed response.
 func newHTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	transport.Protocols = &protocols
+	transport.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
 	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
