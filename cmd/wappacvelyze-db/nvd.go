@@ -1,9 +1,11 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -50,11 +52,20 @@ type nvdMetric struct {
 // name a product in the database. Feeds are hundreds of megabytes decompressed, so the
 // vulnerabilities array is decoded one element at a time.
 func ingestNVDFeed(ctx context.Context, f fetcher, url string, database *db.Database) (int, error) {
-	body, err := f.openGzip(ctx, url)
+	path, err := f.download(ctx, url)
 	if err != nil {
 		return 0, err
 	}
-	defer body.Close()
+	defer os.Remove(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	body, err := gzip.NewReader(file)
+	if err != nil {
+		return 0, fmt.Errorf("decompress %s: %w", url, err)
+	}
 	dec := json.NewDecoder(body)
 	if err := seekArray(dec, "vulnerabilities"); err != nil {
 		return 0, fmt.Errorf("%s: %w", url, err)

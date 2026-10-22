@@ -4,9 +4,11 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -104,4 +106,99 @@ func (f fetcher) openGzip(ctx context.Context, url string) (io.ReadCloser, error
 		io.Reader
 		io.Closer
 	}{zr, body}, nil
+}
+
+// downloadAttempts bounds resume requests, not restarts: each one continues from the last
+// byte received, so a flaky server only has to keep up long enough to make progress.
+const downloadAttempts = 20
+
+var downloadBackoff = 2 * time.Second
+
+// download fetches url into a temporary file, resuming with a Range request whenever the
+// connection drops mid-body. NVD's Cloudflare edge does not cache the feeds and drops slow
+// transfers at random points (curl over HTTP/1.1 sees it too), so restarting from zero can
+// fail indefinitely on a large feed while resuming always makes progress. The caller removes
+// the file.
+func (f fetcher) download(ctx context.Context, url string) (path string, err error) {
+	file, err := os.CreateTemp("", "wappacvelyze-feed-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		file.Close()
+		if err != nil {
+			os.Remove(file.Name())
+		}
+	}()
+	var have int64
+	for attempt := 1; ; attempt++ {
+		total, err := f.appendRange(ctx, url, file, &have)
+		if err == nil && have == total {
+			return file.Name(), nil
+		}
+		if err == nil {
+			err = fmt.Errorf("received %d of %d bytes", have, total)
+		}
+		if attempt == downloadAttempts {
+			return "", fmt.Errorf("download %s: %w", url, err)
+		}
+		fmt.Fprintf(os.Stderr, "%s: connection dropped at %d bytes (%v), resuming\n", url, have, err)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(downloadBackoff):
+		}
+	}
+}
+
+// appendRange requests the bytes after *have, appends them to file and returns the
+// resource's full size.
+func (f fetcher) appendRange(ctx context.Context, url string, file *os.File, have *int64) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	if *have > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", *have))
+	}
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	var total int64
+	switch resp.StatusCode {
+	case http.StatusOK: // a fresh start, or a server that ignored the Range header
+		if err := file.Truncate(0); err != nil {
+			return 0, err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+		*have = 0
+		total = resp.ContentLength
+	case http.StatusPartialContent:
+		total, err = rangeTotal(resp.Header.Get("Content-Range"), *have)
+		if err != nil {
+			return 0, err
+		}
+	default:
+		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if total < 0 {
+		return 0, errors.New("server did not report the size")
+	}
+	n, err := io.Copy(file, resp.Body)
+	*have += n
+	return total, err
+}
+
+// rangeTotal returns the full size from a Content-Range header, checking it resumes at start.
+func rangeTotal(header string, start int64) (int64, error) {
+	var first, last, total int64
+	if _, err := fmt.Sscanf(header, "bytes %d-%d/%d", &first, &last, &total); err != nil || first != start {
+		return 0, fmt.Errorf("unexpected Content-Range %q for offset %d", header, start)
+	}
+	return total, nil
 }
