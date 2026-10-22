@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -49,7 +48,7 @@ func run(ctx context.Context, sources Sources, out string) error {
 	// The current year's feed grows all year and is NVD's slowest to fully stream; a
 	// generous per-request timeout paired with retries (below) absorbs one bad day
 	// without failing the whole nightly build.
-	f := fetcher{client: &http.Client{Timeout: 20 * time.Minute}}
+	f := fetcher{client: newHTTPClient(20 * time.Minute)}
 	if err := build(ctx, f, sources, database, technologyNames(technologies)); err != nil {
 		return err
 	}
