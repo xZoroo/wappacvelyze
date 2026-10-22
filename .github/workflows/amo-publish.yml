@@ -1,13 +1,26 @@
 name: Publish to Firefox Add-ons
 
+# Releases are tracked with extension-v<version> tags, not by committing to main: anything
+# a workflow does with GITHUB_TOKEN (opening or merging a PR, pushing to main) never
+# triggers other workflows, so a bot version-bump PR would wait forever on its required
+# checks. The version in extension/manifest.json is a placeholder stamped at build time.
 on:
   push:
     branches: [main]
-    paths: ["extension/manifest.json"]
+    paths:
+      - "extension/src/**"
+      - "extension/icons/**"
+      - "extension/manifest.json"
+      - "extension/build.mjs"
+      - "cmd/gen-extension-data/**"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: amo-publish
+  cancel-in-progress: false
 
 jobs:
   publish:
@@ -15,56 +28,101 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
+          persist-credentials: true # pushes the release tag
 
-      - name: Check whether the extension version changed
+      # feat: (or a BREAKING CHANGE footer) on any shipped commit since the last release
+      # bumps the minor version; everything else bumps the patch version.
+      - name: Work out the next version
         id: version
         run: |
-          new=$(jq -r .version extension/manifest.json)
-          old=$(git show HEAD^:extension/manifest.json 2>/dev/null | jq -r .version 2>/dev/null || echo "")
-          echo "new=$new" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$new" != "$old" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          last=$(git tag --list 'extension-v*' --sort=-v:refname | head -n1)
+          if [ -z "$last" ]; then
+            echo "::error::No extension-v* tag; tag the commit of the version currently on AMO first."
+            exit 1
           fi
-          echo "manifest version: $old -> $new"
+          paths=(extension/src extension/icons extension/manifest.json extension/build.mjs cmd/gen-extension-data)
+          if git diff --quiet "$last" HEAD -- "${paths[@]}"; then
+            echo "No shipped extension changes since $last; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          messages=$(git log --no-merges --format=%B "$last..HEAD" -- "${paths[@]}")
+          if grep -qiE '^feat(\([^)]*\))?!?:|BREAKING[ -]CHANGE' <<< "$messages"; then
+            bump=minor
+          else
+            bump=patch
+          fi
+          IFS=. read -r major minor patch <<< "${last#extension-v}"
+          if [ "$bump" = minor ]; then
+            minor=$((minor + 1)); patch=0
+          else
+            patch=$((patch + 1))
+          fi
+          version="$major.$minor.$patch"
+          echo "$last -> $version ($bump)"
+          {
+            echo "publish=true"
+            echo "version=$version"
+            echo "notes<<EOF_NOTES"
+            git log --no-merges --format='- %s' "$last..HEAD" -- "${paths[@]}"
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: steps.version.outputs.changed == 'true'
+        if: steps.version.outputs.publish == 'true'
         with:
           go-version: stable
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.version.outputs.changed == 'true'
+        if: steps.version.outputs.publish == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: extension/package-lock.json
 
-      - name: Build the Firefox package
-        if: steps.version.outputs.changed == 'true'
+      - name: Stamp the version and build the Firefox package
+        if: steps.version.outputs.publish == 'true'
         working-directory: extension
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          for file in manifest.json package.json; do
+            jq --arg v "$VERSION" '.version = $v' "$file" > "$RUNNER_TEMP/$file"
+            mv "$RUNNER_TEMP/$file" "$file"
+          done
           npm ci --no-audit --no-fund
           npm run build
 
       - name: Archive the source for reviewers
-        if: steps.version.outputs.changed == 'true'
-        run: git archive --format=zip -o source.zip HEAD
+        if: steps.version.outputs.publish == 'true'
+        run: git archive --format=zip -o "$RUNNER_TEMP/source.zip" HEAD
 
       - name: Submit to addons.mozilla.org
-        if: steps.version.outputs.changed == 'true'
+        if: steps.version.outputs.publish == 'true'
         working-directory: extension
         env:
+          NOTES: ${{ steps.version.outputs.notes }}
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
+          set -euo pipefail
+          jq --arg notes "$NOTES" '.version.release_notes["en-US"] = $notes' amo-metadata.json \
+            > "$RUNNER_TEMP/amo-metadata.json"
           npx --yes web-ext@10.6.0 sign \
             --source-dir dist-firefox \
             --channel listed \
-            --amo-metadata amo-metadata.json \
-            --upload-source-code ../source.zip \
-            --artifacts-dir ../dist-artifacts \
+            --amo-metadata "$RUNNER_TEMP/amo-metadata.json" \
+            --upload-source-code "$RUNNER_TEMP/source.zip" \
+            --artifacts-dir "$RUNNER_TEMP/artifacts" \
             --no-input
+
+      - name: Tag the release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "extension-v$VERSION"
+          git push origin "extension-v$VERSION"

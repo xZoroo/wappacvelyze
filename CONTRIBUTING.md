@@ -26,6 +26,10 @@ npm run typecheck       # tsc --noEmit
 npm run lint            # oxlint
 ```
 
+Start a commit subject with `feat:` when it adds a user-visible extension feature — the
+release workflow turns that into a minor version bump; every other change ships as a
+patch release.
+
 CI runs the same checks. `gofmt` and `npm run fmt` (oxfmt) take care of formatting.
 
 For extension changes, load `extension/dist` unpacked in a Chromium browser and check the
