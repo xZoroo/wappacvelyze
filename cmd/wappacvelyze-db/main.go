@@ -45,10 +45,9 @@ func run(ctx context.Context, sources Sources, out string) error {
 		return err
 	}
 	database := newDatabase(technologies)
-	// The current year's feed grows all year and is NVD's slowest to fully stream; a
-	// generous per-request timeout paired with retries (below) absorbs one bad day
-	// without failing the whole nightly build.
-	f := fetcher{client: newHTTPClient(20 * time.Minute)}
+	// NVD serves the feeds slowly (tens of KB/s at times) and the current year's grows to
+	// tens of megabytes, so one request can legitimately take many minutes.
+	f := fetcher{client: newHTTPClient(45 * time.Minute)}
 	if err := build(ctx, f, sources, database, technologyNames(technologies)); err != nil {
 		return err
 	}

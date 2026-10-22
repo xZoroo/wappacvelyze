@@ -290,18 +290,37 @@ func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
 	}
 }
 
-// TestNewHTTPClientAvoidsConnectionReuse locks in the fix for NVD's edge intermittently
-// resetting HTTP/2 streams on a long-lived connection partway through the run: every
-// request must get a fresh HTTP/1.1 connection rather than reusing a prior one.
-func TestNewHTTPClientAvoidsConnectionReuse(t *testing.T) {
-	transport, ok := newHTTPClient(time.Minute).Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("Transport is %T, want *http.Transport", newHTTPClient(time.Minute).Transport)
+// TestNewHTTPClientUsesHTTP1EvenWhenTheServerOffersHTTP2 locks in the fix for Cloudflare
+// resetting NVD's slow HTTP/2 downloads: against a server that supports HTTP/2, the client
+// must still negotiate and speak HTTP/1.1.
+func TestNewHTTPClientUsesHTTP1EvenWhenTheServerOffersHTTP2(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	probe, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !transport.DisableKeepAlives {
-		t.Error("DisableKeepAlives = false, want true (each request needs its own connection)")
+	probe.Body.Close()
+	if probe.ProtoMajor != 2 {
+		t.Fatalf("test server negotiated %s, want HTTP/2 so the check is meaningful", probe.Proto)
 	}
-	if transport.TLSNextProto == nil || len(transport.TLSNextProto) != 0 {
-		t.Errorf("TLSNextProto = %v, want a non-nil empty map (disables HTTP/2)", transport.TLSNextProto)
+
+	// Only add the test CA; replacing the TLS config would hide the ALPN list the
+	// production client actually sends.
+	client := newHTTPClient(time.Minute)
+	client.Transport.(*http.Transport).TLSClientConfig.RootCAs =
+		srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
+	resp, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.ProtoMajor != 1 {
+		t.Errorf("negotiated %s, want HTTP/1.1", resp.Proto)
 	}
 }
