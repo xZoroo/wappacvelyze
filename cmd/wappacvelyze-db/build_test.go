@@ -289,3 +289,19 @@ func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
 		t.Errorf("attempts = %d, want 3", attempts)
 	}
 }
+
+// TestNewHTTPClientAvoidsConnectionReuse locks in the fix for NVD's edge intermittently
+// resetting HTTP/2 streams on a long-lived connection partway through the run: every
+// request must get a fresh HTTP/1.1 connection rather than reusing a prior one.
+func TestNewHTTPClientAvoidsConnectionReuse(t *testing.T) {
+	transport, ok := newHTTPClient(time.Minute).Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport is %T, want *http.Transport", newHTTPClient(time.Minute).Transport)
+	}
+	if !transport.DisableKeepAlives {
+		t.Error("DisableKeepAlives = false, want true (each request needs its own connection)")
+	}
+	if transport.TLSNextProto == nil || len(transport.TLSNextProto) != 0 {
+		t.Errorf("TLSNextProto = %v, want a non-nil empty map (disables HTTP/2)", transport.TLSNextProto)
+	}
+}
