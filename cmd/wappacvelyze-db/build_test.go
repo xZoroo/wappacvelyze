@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,6 +232,7 @@ func TestIngestRecordDedupesMatches(t *testing.T) {
 // fails partway through streaming (as the 2026 feed did in CI) and confirms a retry
 // completes the ingest without duplicating records already applied by the failed attempt.
 func TestIngestNVDFeedWithRetryRecoversAndDoesNotDoubleCount(t *testing.T) {
+	fastDownloadRetries(t)
 	attempts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
@@ -278,6 +280,7 @@ func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
 	}))
 	defer srv2.Close()
 
+	fastDownloadRetries(t)
 	database := newDatabase(nil)
 	_, err := ingestNVDFeedWithRetryBackoff(
 		context.Background(), fetcher{client: srv2.Client()}, srv2.URL, database, 3, time.Millisecond,
@@ -285,8 +288,65 @@ func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error after exhausting retries")
 	}
-	if attempts != 3 {
-		t.Errorf("attempts = %d, want 3", attempts)
+	if want := 3 * downloadAttempts; attempts != want {
+		t.Errorf("requests = %d, want %d (3 ingest attempts x %d resume attempts)", attempts, want, downloadAttempts)
+	}
+}
+
+func fastDownloadRetries(t *testing.T) {
+	t.Helper()
+	saved := downloadBackoff
+	downloadBackoff = time.Millisecond
+	t.Cleanup(func() { downloadBackoff = saved })
+}
+
+// cappedWriter aborts the connection after limit body bytes, the way NVD's edge drops a
+// slow download partway through.
+type cappedWriter struct {
+	http.ResponseWriter
+	limit int
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if len(p) > c.limit {
+		_, _ = c.ResponseWriter.Write(p[:c.limit])
+		c.ResponseWriter.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}
+	c.limit -= len(p)
+	return c.ResponseWriter.Write(p)
+}
+
+// TestDownloadResumesAfterMidBodyDrops proves a feed whose connection drops repeatedly is
+// reassembled byte-for-byte by resuming with Range requests rather than restarting.
+func TestDownloadResumesAfterMidBodyDrops(t *testing.T) {
+	fastDownloadRetries(t)
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 4096) // 64 KiB
+	var ranges []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ranges = append(ranges, r.Header.Get("Range"))
+		if len(ranges) <= 3 {
+			w = &cappedWriter{ResponseWriter: w, limit: 10000}
+		}
+		http.ServeContent(w, r, "feed.json.gz", time.Time{}, bytes.NewReader(payload))
+	}))
+	defer srv.Close()
+
+	path, err := fetcher{client: srv.Client()}.download(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	defer os.Remove(path)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("got %d bytes, want the original %d bytes", len(got), len(payload))
+	}
+	want := []string{"", "bytes=10000-", "bytes=20000-", "bytes=30000-"}
+	if strings.Join(ranges, ",") != strings.Join(want, ",") {
+		t.Errorf("Range headers = %q, want %q (resume from the last byte, never restart)", ranges, want)
 	}
 }
 
