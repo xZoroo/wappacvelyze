@@ -108,9 +108,10 @@ func (f fetcher) openGzip(ctx context.Context, url string) (io.ReadCloser, error
 	}{zr, body}, nil
 }
 
-// downloadAttempts bounds resume requests, not restarts: each one continues from the last
-// byte received, so a flaky server only has to keep up long enough to make progress.
-const downloadAttempts = 20
+// downloadStallLimit bounds consecutive requests that add no bytes. Requests that make
+// progress do not count: NVD has dropped a single feed once per megabyte or so, and the
+// largest feeds are tens of megabytes.
+const downloadStallLimit = 20
 
 var downloadBackoff = 2 * time.Second
 
@@ -130,8 +131,8 @@ func (f fetcher) download(ctx context.Context, url string) (path string, err err
 			os.Remove(file.Name())
 		}
 	}()
-	var have int64
-	for attempt := 1; ; attempt++ {
+	var have, best int64
+	for stalls := 0; ; {
 		total, err := f.appendRange(ctx, url, file, &have)
 		if err == nil && have == total {
 			return file.Name(), nil
@@ -139,8 +140,10 @@ func (f fetcher) download(ctx context.Context, url string) (path string, err err
 		if err == nil {
 			err = fmt.Errorf("received %d of %d bytes", have, total)
 		}
-		if attempt == downloadAttempts {
-			return "", fmt.Errorf("download %s: %w", url, err)
+		if have > best {
+			best, stalls = have, 0
+		} else if stalls++; stalls == downloadStallLimit {
+			return "", fmt.Errorf("download %s: no progress after %d attempts: %w", url, stalls, err)
 		}
 		fmt.Fprintf(os.Stderr, "%s: connection dropped at %d bytes (%v), resuming\n", url, have, err)
 		select {
