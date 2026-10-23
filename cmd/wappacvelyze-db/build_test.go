@@ -288,8 +288,9 @@ func TestIngestNVDFeedWithRetryGivesUpAfterRepeatedFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error after exhausting retries")
 	}
-	if want := 3 * downloadAttempts; attempts != want {
-		t.Errorf("requests = %d, want %d (3 ingest attempts x %d resume attempts)", attempts, want, downloadAttempts)
+	// Per ingest attempt: one request that makes progress (4 bytes), then the stall limit.
+	if want := 3 * (1 + downloadStallLimit); attempts != want {
+		t.Errorf("requests = %d, want %d", attempts, want)
 	}
 }
 
@@ -382,5 +383,35 @@ func TestNewHTTPClientUsesHTTP1EvenWhenTheServerOffersHTTP2(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.ProtoMajor != 1 {
 		t.Errorf("negotiated %s, want HTTP/1.1", resp.Proto)
+	}
+}
+
+// TestDownloadKeepsResumingWhileMakingProgress proves the stall limit counts only requests
+// that add no bytes: a download dropped far more often than the limit still completes as
+// long as each connection delivers something.
+func TestDownloadKeepsResumingWhileMakingProgress(t *testing.T) {
+	fastDownloadRetries(t)
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 4096) // 64 KiB
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.ServeContent(&cappedWriter{ResponseWriter: w, limit: 1000}, r, "feed.json.gz", time.Time{}, bytes.NewReader(payload))
+	}))
+	defer srv.Close()
+
+	path, err := fetcher{client: srv.Client()}.download(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	defer os.Remove(path)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(payload))
+	}
+	if requests <= downloadStallLimit {
+		t.Fatalf("requests = %d; the test needs more drops than the stall limit (%d) to mean anything", requests, downloadStallLimit)
 	}
 }
